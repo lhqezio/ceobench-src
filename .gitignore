@@ -1,0 +1,100 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache/
+*.cache
+
+# Checkpoints (runtime state, not tracked)
+checkpoint.json
+checkpoint.json.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Run data (large, per-run state)
+baseline_runs/
+bash_agent_runs/
+opencode_runs/
+workspace/
+workspace_*/
+workspaces/
+test_workspace/
+test_10day/
+.oracle_workspace/
+simulation.db
+*.db
+*.db-shm
+*.db-wal
+
+# Generated artifacts
+*.pdf
+*.png
+*.zip
+
+# Reports and viz (generated, not source)
+reports/
+viz/data/
+monitor/data.json
+wiki_pages/
+wiki_diagrams/
+
+# Archive
+archive/
+
+# Modal serving
+modal_glm5/
+
+# Misc generated data
+negotiation_llm_output.txt
+social_posts_llm_output.txt
+social_posts_samples.md
+benchmark_log_day31_gameover.md
+*_social_media_posts.json
+*_thread_python_exec.json
+*_recent_threads.json
+test_social_posts_output.json
+agent_10days_log.txt
+agent_log.txt
