@@ -26,7 +26,6 @@ from . import pricing
 from . import marketing
 from . import infrastructure
 from . import enterprise
-from . import vc
 from . import market
 from . import research
 from . import analytics

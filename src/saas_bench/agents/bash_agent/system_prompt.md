@@ -15,7 +15,6 @@ You operate in a working directory with the following structure:
 │   │   ├── marketing.json
 │   │   ├── infrastructure.json
 │   │   ├── enterprise.json
-│   │   ├── vc.json
 │   │   ├── market.json
 │   │   ├── research.json
 │   │   └── analytics.json

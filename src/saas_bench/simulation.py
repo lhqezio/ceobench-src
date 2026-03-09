@@ -127,7 +127,6 @@ class DayResult:
     new_enterprise_subscribers_seats: int = 0  # Total seats from enterprise deals that converted to subscribed today
     total_individual_subscribers: int = 0  # Current total individual subscribers
     total_enterprise_subscription_seats: int = 0  # Current total enterprise seats subscribed
-    # V2: Equity fields
 
 
 class Simulator:
