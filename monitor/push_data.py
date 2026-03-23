@@ -44,12 +44,12 @@ def _open_run_db(run_dir: Path) -> sqlite3.Connection | None:
 
 # Run registry
 RUN_REGISTRY = {
-    "46d72796": {"label": "GLM-5 v3 run 1", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
-    "ed94e7fc": {"label": "GLM-5 v3 run 2", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
-    "a089097d": {"label": "GLM-5 v3 run 3", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
-    "0c4b4698": {"label": "GLM-5 v3 run 4", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
-    "4107d983": {"label": "GLM-5 v3 run 5", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
-    "6ab77e7f": {"label": "Sonnet 4.6 Bedrock run 1", "model": "claude-sonnet-4-6", "seed": 42, "days": 1095},
+    "5464038b": {"label": "GLM-5 v3.2 run 1", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
+    "5f35a596": {"label": "GLM-5 v3.2 run 2", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
+    "83e43a30": {"label": "GLM-5 v3.2 run 3", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
+    "9f984e69": {"label": "GLM-5 v3.2 run 4", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
+    "eea79b7a": {"label": "GLM-5 v3.2 run 5", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
+    "b2a6fd1f": {"label": "Sonnet 4.6 Bedrock run 1", "model": "claude-sonnet-4-6", "seed": 42, "days": 1095},
 }
 
 

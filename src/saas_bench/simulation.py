@@ -4019,6 +4019,7 @@ class Simulator:
                 if abs(effect_by_group.get(gid, 0.0)) >= viral_threshold
             ]
             comment_post_ids = []  # Collect post_ids of customer comments on this agent post
+            print(f"[SOCIAL] Post {post_id}: effects={effect_by_group}, viral_groups={viral_groups}")
 
             if viral_groups:
                 with ThreadPoolExecutor(max_workers=min(len(viral_groups), 6)) as executor:
@@ -4069,8 +4070,10 @@ class Simulator:
                                 self.current_day, 'agent_social_reply',
                                 in_tok, out_tok, model=social_model
                             )
-                        except Exception:
-                            pass  # Skip failed replies
+                        except Exception as e:
+                            import traceback
+                            print(f"[SOCIAL] Reply generation failed for group {gid}: {e}")
+                            traceback.print_exc()
 
             # Store comment post IDs on the agent post
             if comment_post_ids:
