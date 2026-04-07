@@ -2614,6 +2614,7 @@ class Simulator:
                         is_contract_locked = True
                         events.append('contract_dissatisfaction')
 
+            seat_count = int(sub['seat_count'] or 1)
             customer_events[customer_id] = {
                 'old_satisfaction': old_satisfaction,
                 'new_satisfaction': new_sat,
