@@ -548,8 +548,8 @@ class BenchmarkConfig:
     # Frequency: 6× original (mean 10 days between events).
     # Magnitude: scales linearly from 1× at day 0 to 6× at total_days.
     # Early game = small disruptions, late game = major market shifts.
-    competitor_event_mean_interval: int = 14      # 1.5x freq of v3.3b (was 21)
-    competitor_event_min_interval: int = 6        # 1.5x freq of v3.3b (was 9)
+    competitor_event_mean_interval: int = 7       # 2x freq of v3.3d (was 14)
+    competitor_event_min_interval: int = 3        # 2x freq of v3.3d (was 6)
     competitor_event_post_days: int = 3           # Days of competitor-themed social posts after event
     competitor_event_posts_per_day: int = 2       # Posts/day during event window
     # Boost distribution: lognormal(mu, sigma) — BASE values (1× magnitude)
