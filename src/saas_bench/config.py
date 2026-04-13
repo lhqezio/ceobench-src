@@ -548,8 +548,8 @@ class BenchmarkConfig:
     # Frequency: 6× original (mean 10 days between events).
     # Magnitude: scales linearly from 1× at day 0 to 6× at total_days.
     # Early game = small disruptions, late game = major market shifts.
-    competitor_event_mean_interval: int = 21      # 0.66x freq of v3.2z (was 14)
-    competitor_event_min_interval: int = 9        # 0.66x freq of v3.2z (was 6)
+    competitor_event_mean_interval: int = 14      # 1.5x freq of v3.3b (was 21)
+    competitor_event_min_interval: int = 6        # 1.5x freq of v3.3b (was 9)
     competitor_event_post_days: int = 3           # Days of competitor-themed social posts after event
     competitor_event_posts_per_day: int = 2       # Posts/day during event window
     # Boost distribution: lognormal(mu, sigma) — BASE values (1× magnitude)
@@ -748,7 +748,7 @@ class BenchmarkConfig:
 
     # === ISSUE RESOLUTION PARAMS ===
     issue_resolution_base_rate: float = 2.0  # Issues resolved per day at $0 ops spending
-    issue_resolution_ops_scale: float = 0.1  # Additional issues per $ ops spend per day (was 0.053)
+    issue_resolution_ops_scale: float = 0.08  # Additional issues per $ ops spend per day (was 0.1)
     quick_resolution_threshold_days: int = 2  # Max days for "quick" resolution bonus
     quick_resolution_boost_1day: float = 0.40  # Relationship boost for 1-day resolution
     quick_resolution_boost_2day: float = 0.30  # Relationship boost for 2-day resolution
