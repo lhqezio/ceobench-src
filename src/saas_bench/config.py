@@ -565,7 +565,7 @@ class BenchmarkConfig:
     competitor_event_late_cutoff_days: int = 30
 
     # Grace period: no drift or competitor events for the first N days
-    drift_grace_period_days: int = 50  # v3.3p: was 100. No global/group/individual drift or competitor events before this day
+    drift_grace_period_days: int = 100  # v3.3z: 50→100. No global/group/individual drift or competitor events before this day
 
     # Issue generation
     # Reality-matched: Average SaaS products see 5-15% MAU monthly ticket rates
@@ -751,7 +751,7 @@ class BenchmarkConfig:
 
     # === ISSUE RESOLUTION PARAMS ===
     issue_resolution_base_rate: float = 2.0  # Issues resolved per day at $0 ops spending
-    issue_resolution_ops_scale: float = 0.1  # v3.3y: 0.15→0.1. Additional issues resolved per $ ops spend per day
+    issue_resolution_ops_scale: float = 0.15  # v3.3z: 0.1→0.15. Additional issues resolved per $ ops spend per day
     quick_resolution_threshold_days: int = 2  # Max days for "quick" resolution bonus
     quick_resolution_boost_1day: float = 0.40  # Relationship boost for 1-day resolution
     quick_resolution_boost_2day: float = 0.30  # Relationship boost for 2-day resolution
