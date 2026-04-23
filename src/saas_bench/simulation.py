@@ -2646,12 +2646,18 @@ class Simulator:
     def _process_issues(self, config: dict, outage: bool):
         """Generate and resolve customer issues.
 
-        Issue Resolution Mechanics:
-        - Global: mean resolved/day = base_rate + ops_scale × global_ops_spend
-        - Per-group targeted ops: each group gets ADDITIONAL resolution capacity
-          (extra_mean = ops_scale × targeted_spend), applied only to that group's issues
-        - No priority ordering — targeted spend adds resolution speed for the group
-        - Number resolved = Poisson(mean), capped at num_open_issues
+        Issue Resolution Mechanics (v3.4h — per-group Poisson partitioning):
+        - Every pool (global + 4 targeted scopes) is partitioned by customer group.
+        - For each group g in a pool of size P with n_g members:
+            mean_g = (base_contrib + scale_g × spend) × (n_g / P)
+          where scale_g is `enterprise_ops_scale` for E*/D_E* groups, else
+          `individual_ops_scale`. Global pool uses base_contrib = base_rate;
+          targeted pools use base_contrib = 0.
+        - Draw N_g ~ Poisson(mean_g), sample N_g customers uniformly from group g's
+          members of the pool. Mixed pools yield composition-weighted rates;
+          pure-group pools collapse to scale_g × spend.
+        - A customer covered by multiple scopes simply gets more chances per day
+          (each scope skips already-resolved customers).
 
         When issues are resolved quickly (within 2 days), the customer gets a
         relationship boost. This does NOT apply during outages since outages
@@ -2659,16 +2665,14 @@ class Simulator:
         """
         spend_ops = config['spend_operations']
 
-        # Global resolution rate (from global ops spend only — targeted ops is per-group)
-        global_mean_issues_per_day = self.config.issue_resolution_base_rate + self.config.issue_resolution_ops_scale * spend_ops
-
         # L5: Use cached subscribers from _update_customer_satisfaction instead of 2 more full scans
-        # _cached_all_subscribers has: customer_id, satisfaction (old), open_issue_days, relationship, group_id, seat_count
+        # _cached_all_subscribers has: customer_id, satisfaction (old), open_issue_days, relationship, group_id, seat_count, plan
         all_subscribers = getattr(self, '_cached_all_subscribers', None)
         if all_subscribers is None:
             # Fallback if cache not populated (shouldn't happen in normal step_day flow)
             all_subscribers = self.conn.execute("""
-                SELECT cs.customer_id, cs.satisfaction, cs.open_issue_days, cs.relationship, c.group_id, c.seat_count
+                SELECT cs.customer_id, cs.satisfaction, cs.open_issue_days, cs.relationship,
+                       c.group_id, c.seat_count, s.plan
                 FROM customer_state cs
                 JOIN subscriptions s ON cs.customer_id = s.customer_id
                 JOIN customers c ON cs.customer_id = c.customer_id
@@ -2681,34 +2685,105 @@ class Simulator:
         resolved_indices = set()
 
         if num_open_issues > 0:
-            # Step 1: Global resolution — random selection across ALL groups
-            num_to_resolve_global = min(self.rng.poisson(global_mean_issues_per_day), num_open_issues)
-            if num_to_resolve_global > 0:
-                chosen = self.rng.choice(num_open_issues, size=num_to_resolve_global, replace=False)
-                resolved_indices.update(int(c) for c in chosen)
+            # Per-group scale lookup (enterprise vs individual). Fall back to
+            # individual scale if the group is missing from the registry.
+            ind_scale = self.config.individual_ops_scale
+            ent_scale = self.config.enterprise_ops_scale
+            base_rate = self.config.issue_resolution_base_rate
 
-            # Step 2: Per-group targeted resolution — extra capacity per group
+            def _scale_for_group(gid: str) -> float:
+                grp = CUSTOMER_GROUPS.get(gid)
+                if grp is not None and grp.is_enterprise:
+                    return ent_scale
+                return ind_scale
+
+            def _run_pool_by_group(candidate_indices, spend, include_base_rate: bool):
+                """Partition `candidate_indices` by customer group, then draw
+                Poisson(mean_g) resolutions per group where
+                mean_g = (base + scale_g × spend) × (n_g / |pool|).
+
+                `include_base_rate` is True only for the global pool; targeted
+                scopes pass False (base_rate applies once per day, not per pool).
+                """
+                if not candidate_indices:
+                    return
+                unresolved = [i for i in candidate_indices if i not in resolved_indices]
+                if not unresolved:
+                    return
+                pool_size = len(unresolved)
+                base = base_rate if include_base_rate else 0.0
+                if base <= 0 and spend <= 0:
+                    return
+                # Partition unresolved pool members by group_id
+                group_members: Dict[str, list] = {}
+                for i in unresolved:
+                    gid = subscribers_with_issues[i]['group_id']
+                    group_members.setdefault(gid, []).append(i)
+                for gid, members in group_members.items():
+                    n_g = len(members)
+                    scale_g = _scale_for_group(gid)
+                    mean_g = (base + scale_g * spend) * (n_g / pool_size)
+                    if mean_g <= 0:
+                        continue
+                    num_resolve = min(int(self.rng.poisson(mean_g)), n_g)
+                    if num_resolve <= 0:
+                        continue
+                    chosen = self.rng.choice(n_g, size=num_resolve, replace=False)
+                    resolved_indices.update(members[int(c)] for c in chosen)
+
+            # Step 1: Global resolution — partition ALL open issues by group.
+            # mean_g = (base_rate + scale_g × spend_ops) × (n_g / num_open_issues)
+            _run_pool_by_group(
+                list(range(num_open_issues)),
+                spend_ops,
+                include_base_rate=True,
+            )
+
+            # Step 2: Targeted resolution pools — each scope runs its own independent
+            # per-group-partitioned Poisson pool (mean_g = scale_g × spend × n_g / |pool|).
+            # Scopes: by_group, by_plan, by_group_plan, by_customer. A customer covered
+            # by multiple scopes can be resolved by any one of them (each scope skips
+            # already-resolved customers).
+
+            # --- Step 2a: by_group ---
             if self.config.targeted_ops_spend:
-                # Build index lists per group
-                group_indices = {}
+                group_indices: Dict[str, list] = {}
                 for i, sub in enumerate(subscribers_with_issues):
                     gid = sub['group_id']
                     if gid in self.config.targeted_ops_spend:
                         group_indices.setdefault(gid, []).append(i)
-
                 for group_id, extra_spend in self.config.targeted_ops_spend.items():
-                    if extra_spend <= 0 or group_id not in group_indices:
-                        continue
-                    # Unresolved members of this group (not already resolved by global pool)
-                    unresolved = [i for i in group_indices[group_id] if i not in resolved_indices]
-                    if not unresolved:
-                        continue
-                    # Extra resolution rate for this group
-                    extra_mean = self.config.issue_resolution_ops_scale * extra_spend
-                    num_extra = min(self.rng.poisson(extra_mean), len(unresolved))
-                    if num_extra > 0:
-                        chosen = self.rng.choice(len(unresolved), size=num_extra, replace=False)
-                        resolved_indices.update(unresolved[c] for c in chosen)
+                    _run_pool_by_group(group_indices.get(group_id, []), extra_spend, include_base_rate=False)
+
+            # --- Step 2b: by_plan ---
+            if self.config.targeted_ops_spend_by_plan:
+                plan_indices: Dict[str, list] = {}
+                for i, sub in enumerate(subscribers_with_issues):
+                    plan = sub['plan']
+                    if plan in self.config.targeted_ops_spend_by_plan:
+                        plan_indices.setdefault(plan, []).append(i)
+                for plan, extra_spend in self.config.targeted_ops_spend_by_plan.items():
+                    _run_pool_by_group(plan_indices.get(plan, []), extra_spend, include_base_rate=False)
+
+            # --- Step 2c: by_group_plan (intersection) ---
+            if self.config.targeted_ops_spend_by_group_plan:
+                gp_indices: Dict[tuple, list] = {}
+                for i, sub in enumerate(subscribers_with_issues):
+                    key = (sub['group_id'], sub['plan'])
+                    if key[0] in self.config.targeted_ops_spend_by_group_plan \
+                       and key[1] in self.config.targeted_ops_spend_by_group_plan[key[0]]:
+                        gp_indices.setdefault(key, []).append(i)
+                for gid, plans in self.config.targeted_ops_spend_by_group_plan.items():
+                    for plan, extra_spend in plans.items():
+                        _run_pool_by_group(gp_indices.get((gid, plan), []), extra_spend, include_base_rate=False)
+
+            # --- Step 2d: by_customer ---
+            if self.config.targeted_ops_spend_by_customer:
+                for i, sub in enumerate(subscribers_with_issues):
+                    cid = sub['customer_id']
+                    extra_spend = self.config.targeted_ops_spend_by_customer.get(cid, 0.0)
+                    if extra_spend > 0:
+                        _run_pool_by_group([i], extra_spend, include_base_rate=False)
 
             # Step 3: Apply resolution — L4 batch writes
             # Collect updates: (new_relationship_or_None, customer_id) for resolved
@@ -6348,8 +6423,13 @@ Guidelines:
             add_ledger_entry(self.conn, self.current_day, 'advertising', -total_targeted, 'Targeted ad spend')
             total_costs += total_targeted
 
-        # Targeted ops spend (additional per-group operations spend)
-        total_targeted_ops = sum(self.config.targeted_ops_spend.values())
+        # Targeted ops spend: sum of all 4 scopes (by_group, by_plan, by_group_plan, by_customer)
+        total_targeted_ops = (
+            sum(self.config.targeted_ops_spend.values())
+            + sum(self.config.targeted_ops_spend_by_plan.values())
+            + sum(v for inner in self.config.targeted_ops_spend_by_group_plan.values() for v in inner.values())
+            + sum(self.config.targeted_ops_spend_by_customer.values())
+        )
         if total_targeted_ops > 0:
             add_ledger_entry(self.conn, self.current_day, 'operations', -total_targeted_ops, 'Targeted ops spend')
             total_costs += total_targeted_ops

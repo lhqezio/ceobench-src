@@ -403,11 +403,21 @@ class BenchmarkConfig:
     # Example: {"linkedin": {"E1": 200, "E2": 100}} adds $300/day extra ad cost
     targeted_ad_spend: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
-    # Per-group targeted ops spend: {group_id: additional_$/day}
-    # ADDITIONAL to global ops spending. Adds extra resolution capacity per group.
-    # Each group gets additional issues resolved/day = ops_scale × group_spend, on top of the global pool.
-    # Example: {"E1": 300, "E2": 200} adds $500/day extra ops cost, boosting E1 and E2 resolution speed
-    targeted_ops_spend: Dict[str, float] = field(default_factory=dict)
+    # Targeted ops spend: ADDITIONAL to global ops spending. Each scope below runs its
+    # OWN independent Poisson pool, partitioned by customer group. Each group g in the
+    # pool draws Poisson(scale_g × spend × n_g / |pool|) resolutions, where scale_g is
+    # `enterprise_ops_scale` for E*/D_E* groups and `individual_ops_scale` otherwise.
+    # A customer covered by multiple scopes simply gets more chances of being resolved.
+    # All four scopes sum into the 'operations' ledger entry for daily cost.
+    # Examples:
+    #   by_group={"E1": 300}                      → +$300/day on E1's issue pool
+    #   by_plan={"A": 200}                        → +$200/day on all plan-A customers
+    #   by_group_plan={"E1": {"A": 150}}          → +$150/day on E1 plan-A customers only
+    #   by_customer={42: 50}                      → +$50/day on customer_id=42 only
+    targeted_ops_spend: Dict[str, float] = field(default_factory=dict)               # {group_id: $/day} (alias: by_group)
+    targeted_ops_spend_by_plan: Dict[str, float] = field(default_factory=dict)       # {plan: $/day}  plan ∈ {A,B,C}
+    targeted_ops_spend_by_group_plan: Dict[str, Dict[str, float]] = field(default_factory=dict)  # {group_id: {plan: $/day}}
+    targeted_ops_spend_by_customer: Dict[int, float] = field(default_factory=dict)   # {customer_id: $/day}
 
     # Per-group targeted dev spend: {group_id: additional_$/day}
     # ADDITIONAL to global dev spending. Provides CUMULATIVE per-group quality bonuses.
@@ -751,7 +761,12 @@ class BenchmarkConfig:
 
     # === ISSUE RESOLUTION PARAMS ===
     issue_resolution_base_rate: float = 2.0  # Issues resolved per day at $0 ops spending
-    issue_resolution_ops_scale: float = 0.25  # v3.4g: 0.2→0.25 (reverted). Additional issues resolved per $ ops spend per day
+    # v3.4h: per-group ops scales. Enterprise issues are harder to resolve per $ than
+    # individual issues. Each pool (global + 4 targeted scopes) is partitioned by group;
+    # each group g draws Poisson(scale_g × spend × n_g / |pool|) resolutions. Pure-group
+    # pools collapse to scale_g × spend. Mixed pools yield a composition-weighted rate.
+    individual_ops_scale: float = 0.25  # issues resolved per $ ops spend per day for S* + D_S* groups
+    enterprise_ops_scale: float = 0.05  # issues resolved per $ ops spend per day for E* + D_E* groups (lower than individual)
     quick_resolution_threshold_days: int = 2  # Max days for "quick" resolution bonus
     quick_resolution_boost_1day: float = 0.40  # Relationship boost for 1-day resolution
     quick_resolution_boost_2day: float = 0.30  # Relationship boost for 2-day resolution

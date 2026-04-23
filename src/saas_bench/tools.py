@@ -194,14 +194,14 @@ TOOL_DOCS = {
         },
         "impact": {
             "advertising": "Generates new leads. Each channel has a fixed leads-per-$1000 rate per customer group. Use set_ad_channel_spend for channel allocation, set_targeted_ad_spend for per-group targeting.",
-            "operations": "CRITICAL: (1) REDUCES OUTAGE PROBABILITY - At $0: ~3% daily outage risk (~1/month). At $500: ~1.1% daily (~3/year). (2) Speeds up issue resolution: mean resolved/day = 1 + 0.01 × spend. WARNING: Without ops spending, frequent outages damage reputation and cause churn!",
+            "operations": "CRITICAL: (1) REDUCES OUTAGE PROBABILITY - At $0: ~3% daily outage risk (~1/month). At $500: ~1.1% daily (~3/year). (2) Speeds up issue resolution. The global issue-resolution pool is partitioned by customer group: each group g draws Poisson((base_rate + scale_g × spend) × n_g / total_open_issues), where scale_g = 0.25 for individual groups (S*, D_S*) and 0.05 for enterprise groups (E*, D_E*). So $1 of ops spend resolves ~0.25 individual issues/day vs ~0.05 enterprise issues/day. WARNING: Without ops spending, frequent outages damage reputation and cause churn!",
             "development": "Dev spending improves product quality (amplified by model tier). Global improvement = 0.006 × ln(1 + global_spend/5000) per day (applies to all groups). Targeted per-group improvement = 0.030 × ln(1 + targeted_spend/5000) per day (5× coefficient, applies to that group only, stacks with global). delivered_quality = (base_product_quality + q_shared_bonus + q_group_bonus) × tier_multiplier."
         },
         "example_call": {
             "tool": "set_daily_spend",
             "arguments": {"advertising": 800, "operations": 1200, "development": 600}
         },
-        "internal_notes": "Ops: outage_prob = 0.03 * exp(-0.002 * ops_spend). Issue resolution: mean_resolved/day = 1 + 0.01 * spend. Dev (global): quality_improvement = 0.006 * ln(1 + spend/5000). Dev (targeted per-group): group_improvement = 0.030 * ln(1 + spend/5000). Advertising: each channel has fixed leads_per_1000_dollars per group.",
+        "internal_notes": "Ops: outage_prob = 0.03 * exp(-0.002 * ops_spend). Issue resolution (global pool, partitioned by group): for each group g with n_g open issues, mean_g = (base_rate + scale_g * spend) * (n_g / total_open_issues); scale_g = 0.25 for individual groups (S*, D_S*), 0.05 for enterprise groups (E*, D_E*). Dev (global): quality_improvement = 0.006 * ln(1 + spend/5000). Dev (targeted per-group): group_improvement = 0.030 * ln(1 + spend/5000). Advertising: each channel has fixed leads_per_1000_dollars per group.",
         "sample_io": {
             "success": [
                 {"label": "Set all three budgets", "input": {"advertising": 800, "operations": 1200, "development": 600}, "output": "Daily spend updated: advertising=$800, operations=$1200, development=$600"},
@@ -327,52 +327,84 @@ TOOL_DOCS = {
     "set_targeted_ops_spend": {
         "name": "set_targeted_ops_spend",
         "category": "Marketing & Spend",
-        "description": "Set ADDITIONAL per-group operations spending on top of the global ops spend. Adds extra issue resolution capacity for each targeted group.",
+        "description": "Set ADDITIONAL operations spending targeted at specific scopes (group, plan, group+plan, individual customer). Each scope runs its own independent Poisson resolution pool on top of the global ops pool.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "targeted_spend": {
                     "type": "object",
-                    "description": "{group_id: additional_$/day}",
-                    "additionalProperties": {"type": "number"}
-                }
+                    "description": "LEGACY alias for by_group: {group_id: $/day}",
+                    "additionalProperties": {"type": "number"},
+                },
+                "by_group": {
+                    "type": "object",
+                    "description": "{group_id: $/day}",
+                    "additionalProperties": {"type": "number"},
+                },
+                "by_plan": {
+                    "type": "object",
+                    "description": "{plan: $/day}; plan ∈ {A, B, C}",
+                    "additionalProperties": {"type": "number"},
+                },
+                "by_group_plan": {
+                    "type": "object",
+                    "description": "{group_id: {plan: $/day}}",
+                    "additionalProperties": {"type": "object"},
+                },
+                "by_customer": {
+                    "type": "object",
+                    "description": "{customer_id_str: $/day}",
+                    "additionalProperties": {"type": "number"},
+                },
             },
-            "required": ["targeted_spend"]
+            "required": [],
         },
         "parameters": {
-            "targeted_spend": {
-                "type": "Dict[str, float]",
-                "description": "Dictionary of {group_id: additional_dollars_per_day}. This spend is ADDED to the global ops spend.",
-                "groups": "S1-S3, E1-E3, and discovered groups (D_S01-D_S10, D_E01-D_E10)"
-            }
+            "targeted_spend": "LEGACY alias for by_group (kept for backward compatibility).",
+            "by_group": "Dict[str, float] — {group_id: $/day}. Groups: S1-S3, E1-E3, discovered.",
+            "by_plan": "Dict[str, float] — {plan: $/day}, plan ∈ {A, B, C}. Applies across all groups.",
+            "by_group_plan": "Dict[str, Dict[str, float]] — {group_id: {plan: $/day}}. Intersection of group and plan.",
+            "by_customer": "Dict[str, float] — {customer_id (as string): $/day}. Single-customer targeting.",
         },
         "returns": {
-            "success": "Targeted ops spend updated (extra $500/day on top of global ops):\n  \u2022 E1: +$300/day\n  \u2022 E2: +$200/day",
-            "failure": "Invalid group IDs: {X}. Valid groups: S1-S3, E1-E3, ..."
+            "success": "Targeted ops spend updated (extra $650/day on top of global ops):\n  Groups: E1: +$300/day\n  Plans: A: +$200/day\n  Group-Plans: E2/B: +$100/day\n  Customers: 1 target(s), +$50/day total",
+            "failure": "Invalid group IDs: {X}. | Invalid plans: {X}. Valid: ['A', 'B', 'C']. | Customer ID 'X' must be an integer."
         },
         "output_schema": {
-            "targeted_spend": "Dict[str, float] — {group_id: $/day}",
-            "total_extra_per_day": "float — total additional ops spend per day",
-            "_access": "result['targeted_spend']['E1'] → E1's extra ops spend"
+            "by_group": "Dict[str, float]",
+            "by_plan": "Dict[str, float]",
+            "by_group_plan": "Dict[str, Dict[str, float]]",
+            "by_customer": "Dict[str, float] — keys are customer_id as strings",
+            "total_extra_per_day": "float — sum of all scopes",
+            "targeted_spend": "Dict[str, float] — legacy alias for by_group",
         },
         "mechanics": {
-            "per_group_resolution": "Each targeted group gets additional resolution capacity (extra_mean_per_day = 0.053 \u00d7 group_spend) on top of the global pool",
-            "cost": "Extra dollars are deducted from cash daily as operations cost"
+            "per_scope_resolution": "Each scope runs its OWN Poisson pool, partitioned by customer group. Within a pool of size |P|, each group g contributes n_g members and draws Poisson(scale_g × spend × n_g / |P|) resolutions, where scale_g = 0.25 for individual groups (S*, D_S*) and scale_g = 0.05 for enterprise groups (E*, D_E*). Enterprise issues are ~5× harder to resolve per $ than individual issues. Pure-group pools (by_group, by_group_plan, by_customer when the customer is in a single group) collapse to scale_g × spend. Mixed pools (by_plan with mixed groups) yield a composition-weighted rate. Scopes are processed independently AFTER the global ops pool; a customer covered by multiple scopes is skipped after first resolution in the day.",
+            "cost": "All four scope amounts sum into one 'operations' ledger entry per day.",
+            "leaving_scope_unchanged": "Any argument left as None leaves that scope unchanged. Passing {} clears that scope.",
         },
-        "impact": "Extra dollars are deducted from cash daily. Each targeted group gets additional issue resolution speed on top of the global resolution pool. Use to provide faster support for high-value segments.",
+        "impact": "Fine-grained targeting of operations spend. Use by_customer to rescue a high-value individual, by_plan for tier-wide support surge, by_group for segment-wide, and by_group_plan for the most precise segment×tier investment.",
         "example_call": {
             "tool": "set_targeted_ops_spend",
-            "arguments": {"targeted_spend": {"E1": 300, "E2": 200}},
+            "arguments": {
+                "by_group": {"E1": 300},
+                "by_plan": {"A": 200},
+                "by_group_plan": {"E2": {"B": 100}},
+                "by_customer": {"42": 50},
+            },
         },
         "sample_io": {
             "success": [
-                {"label": "Target two enterprise groups", "input": {"targeted_spend": {"E1": 300, "E2": 200}}, "output": "Targeted ops spend updated (extra $500/day on top of global ops):\n  • E1: +$300/day\n  • E2: +$200/day"},
-                {"label": "Single group", "input": {"targeted_spend": {"S1": 100}}, "output": "Targeted ops spend updated (extra $100/day on top of global ops):\n  • S1: +$100/day"},
-                {"label": "Clear targeting", "input": {"targeted_spend": {}}, "output": "Targeted ops spend cleared. No additional per-group ops spend."}
+                {"label": "Legacy: two enterprise groups", "input": {"targeted_spend": {"E1": 300, "E2": 200}}, "output": "Targeted ops spend updated (extra $500/day on top of global ops):\n  Groups: E1: +$300/day, E2: +$200/day"},
+                {"label": "Mixed scopes", "input": {"by_group": {"E1": 300}, "by_plan": {"A": 200}, "by_customer": {"42": 50}}, "output": "Targeted ops spend updated (extra $550/day on top of global ops):\n  Groups: E1: +$300/day\n  Plans: A: +$200/day\n  Customers: 1 target(s), +$50/day total"},
+                {"label": "Group-plan intersection", "input": {"by_group_plan": {"E1": {"A": 200}, "E2": {"C": 100}}}, "output": "Targeted ops spend updated (extra $300/day on top of global ops):\n  Group-Plans: E1/A: +$200/day, E2/C: +$100/day"},
+                {"label": "Clear one scope", "input": {"by_group": {}}, "output": "Targeted ops spend updated (extra $0/day on top of global ops):\n  (all scopes empty — no targeted ops spend)"},
             ],
             "failure": [
-                {"label": "Invalid group", "input": {"targeted_spend": {"INVALID": 100}}, "output": "Invalid group IDs: {'INVALID'}. Valid groups: S1, S2, S3, E1, E2, E3, ..."}
-            ]
+                {"label": "Invalid group", "input": {"by_group": {"INVALID": 100}}, "output": "Invalid group IDs: {'INVALID'}. Valid: ['E1', 'E2', 'E3', 'S1', 'S2', 'S3']"},
+                {"label": "Invalid plan", "input": {"by_plan": {"D": 100}}, "output": "Invalid plans: {'D'}. Valid: ['A', 'B', 'C']"},
+                {"label": "Both legacy + new", "input": {"targeted_spend": {"E1": 100}, "by_group": {"E2": 100}}, "output": "Pass either `targeted_spend` (legacy) or `by_group`, not both."},
+            ],
         }
     },
 
@@ -2350,49 +2382,154 @@ class AgentTools:
             'total_extra_per_day': total_extra,
         })
 
-    def set_targeted_ops_spend(self, targeted_spend: Dict[str, float]) -> ToolResult:
-        """Set additional per-group operations spending.
+    def set_targeted_ops_spend(
+        self,
+        targeted_spend: Optional[Dict[str, float]] = None,
+        by_group: Optional[Dict[str, float]] = None,
+        by_plan: Optional[Dict[str, float]] = None,
+        by_group_plan: Optional[Dict[str, Dict[str, float]]] = None,
+        by_customer: Optional[Dict[str, float]] = None,
+    ) -> ToolResult:
+        """Set additional operations spending targeted at specific scopes.
 
-        This is ADDITIONAL to the global operations spend (set_daily_spend).
-        Adds extra issue resolution capacity for targeted groups on top of the
-        global resolution pool.
+        Like set_promotion, four independent targeting scopes are supported; each
+        scope runs its OWN Poisson resolution pool, partitioned by customer group.
+        For each group g in a pool of size |P| with n_g members:
+            mean_g = scale_g × spend × (n_g / |P|)
+        where scale_g = 0.25 for individual groups (S*, D_S*) and scale_g = 0.05
+        for enterprise groups (E*, D_E*). Enterprise issues are ~5× harder to
+        resolve per $ than individual issues. Pure-group pools collapse to
+        scale_g × spend; mixed pools are composition-weighted.
+
+        A customer covered by multiple scopes gets multiple chances of being
+        resolved that day. All scope amounts sum into a single 'operations' ledger entry.
+
+        Any argument left as None is unchanged; passing {} clears that scope.
 
         Args:
-            targeted_spend: {group_id: additional_dollars_per_day}
-                Example: {"E1": 300, "E2": 200}
+            targeted_spend: LEGACY alias for by_group. {group_id: $/day}.
+            by_group: {group_id: $/day}. Valid group_ids: S1-S3, E1-E3, discovered.
+            by_plan: {plan: $/day}. Plan ∈ {A, B, C}. Applies to all subscribers on that plan.
+            by_group_plan: {group_id: {plan: $/day}}. Intersection of group + plan.
+            by_customer: {customer_id_str: $/day}. Single-customer boost (like promotion).
         """
-        # Build set of valid group IDs (initial + discovered only, not undiscovered)
+        # Legacy alias: targeted_spend == by_group
+        if targeted_spend is not None and by_group is None:
+            by_group = targeted_spend
+        elif targeted_spend is not None and by_group is not None:
+            return ToolResult(False, "Pass either `targeted_spend` (legacy) or `by_group`, not both.")
+
         valid_groups = set(INITIAL_CUSTOMER_GROUPS.keys()) | set(get_discovered_groups(self.conn))
+        valid_plans = {'A', 'B', 'C'}
 
-        # Validate
-        invalid_groups = set(targeted_spend.keys()) - valid_groups
-        if invalid_groups:
-            return ToolResult(
-                False,
-                f"Invalid group IDs: {invalid_groups}. "
-                f"Valid groups: {sorted(valid_groups)}"
-            )
-        for group_id, amount in targeted_spend.items():
-            if not isinstance(amount, (int, float)) or amount < 0:
-                return ToolResult(False, f"Amount for {group_id} must be a non-negative number")
+        # ── by_group ──
+        if by_group is not None:
+            if not isinstance(by_group, dict):
+                return ToolResult(False, "by_group must be a dict of {group_id: $/day}")
+            invalid = set(by_group.keys()) - valid_groups
+            if invalid:
+                return ToolResult(False, f"Invalid group IDs: {invalid}. Valid: {sorted(valid_groups)}")
+            for gid, amt in by_group.items():
+                if not isinstance(amt, (int, float)) or amt < 0:
+                    return ToolResult(False, f"Amount for {gid} must be a non-negative number")
+            self.config.targeted_ops_spend = {k: float(v) for k, v in by_group.items()}
 
-        self.config.targeted_ops_spend = targeted_spend
+        # ── by_plan ──
+        if by_plan is not None:
+            if not isinstance(by_plan, dict):
+                return ToolResult(False, "by_plan must be a dict of {plan: $/day}")
+            invalid_plans = set(by_plan.keys()) - valid_plans
+            if invalid_plans:
+                return ToolResult(False, f"Invalid plans: {invalid_plans}. Valid: {sorted(valid_plans)}")
+            for plan, amt in by_plan.items():
+                if not isinstance(amt, (int, float)) or amt < 0:
+                    return ToolResult(False, f"Amount for plan {plan} must be a non-negative number")
+            self.config.targeted_ops_spend_by_plan = {k: float(v) for k, v in by_plan.items()}
 
-        total_extra = sum(targeted_spend.values())
-        summary_parts = [f"  • {gid}: +${amt:.0f}/day" for gid, amt in targeted_spend.items()]
+        # ── by_group_plan ──
+        if by_group_plan is not None:
+            if not isinstance(by_group_plan, dict):
+                return ToolResult(False, "by_group_plan must be a dict of {group_id: {plan: $/day}}")
+            invalid = set(by_group_plan.keys()) - valid_groups
+            if invalid:
+                return ToolResult(False, f"Invalid group IDs in by_group_plan: {invalid}. Valid: {sorted(valid_groups)}")
+            parsed_gp: Dict[str, Dict[str, float]] = {}
+            for gid, plans_dict in by_group_plan.items():
+                if not isinstance(plans_dict, dict):
+                    return ToolResult(False, f"Value for group {gid} must be a dict of {{plan: $/day}}")
+                bad_plans = set(plans_dict.keys()) - valid_plans
+                if bad_plans:
+                    return ToolResult(False, f"Invalid plans for group {gid}: {bad_plans}. Valid: {sorted(valid_plans)}")
+                inner: Dict[str, float] = {}
+                for plan, amt in plans_dict.items():
+                    if not isinstance(amt, (int, float)) or amt < 0:
+                        return ToolResult(False, f"Amount for {gid}/{plan} must be a non-negative number")
+                    inner[plan] = float(amt)
+                parsed_gp[gid] = inner
+            self.config.targeted_ops_spend_by_group_plan = parsed_gp
+
+        # ── by_customer ──
+        if by_customer is not None:
+            if not isinstance(by_customer, dict):
+                return ToolResult(False, "by_customer must be a dict of {customer_id: $/day}")
+            parsed_c: Dict[int, float] = {}
+            for k, amt in by_customer.items():
+                try:
+                    cid = int(k)
+                except (ValueError, TypeError):
+                    return ToolResult(False, f"Customer ID '{k}' must be an integer")
+                if not isinstance(amt, (int, float)) or amt < 0:
+                    return ToolResult(False, f"Amount for customer {k} must be a non-negative number")
+                parsed_c[cid] = float(amt)
+            self.config.targeted_ops_spend_by_customer = parsed_c
+
+        # Summarise current state
+        g = self.config.targeted_ops_spend
+        p = self.config.targeted_ops_spend_by_plan
+        gp = self.config.targeted_ops_spend_by_group_plan
+        c = self.config.targeted_ops_spend_by_customer
+        total_extra = (
+            sum(g.values()) + sum(p.values())
+            + sum(v for inner in gp.values() for v in inner.values())
+            + sum(c.values())
+        )
+        parts = []
+        if g:
+            parts.append("  Groups: " + ", ".join(f"{k}: +${v:.0f}/day" for k, v in g.items()))
+        if p:
+            parts.append("  Plans: " + ", ".join(f"{k}: +${v:.0f}/day" for k, v in p.items()))
+        if gp:
+            gp_parts = [f"{gid}/{plan}: +${v:.0f}/day" for gid, inner in gp.items() for plan, v in inner.items()]
+            parts.append("  Group-Plans: " + ", ".join(gp_parts))
+        if c:
+            parts.append(f"  Customers: {len(c)} target(s), +${sum(c.values()):.0f}/day total")
         result_msg = f"Targeted ops spend updated (extra ${total_extra:.0f}/day on top of global ops):\n"
-        if summary_parts:
-            result_msg += '\n'.join(summary_parts)
-            result_msg += f"\n\nEffect: Each targeted group gets additional issue resolution capacity "
-            result_msg += f"(extra_mean = 0.053 × spend) on top of the global resolution pool."
-        else:
-            result_msg += "  (no targeted ops spend — all ops spend is global)"
+        result_msg += '\n'.join(parts) if parts else "  (all scopes empty — no targeted ops spend)"
+        if parts:
+            result_msg += (
+                "\n\nEffect: Each scope runs its own Poisson pool, partitioned by customer group. "
+                "For each group g in the pool, mean_g = scale_g × spend × (n_g / |pool|), where "
+                "scale_g = 0.25 for individual groups (S*, D_S*) and 0.05 for enterprise groups (E*, D_E*). "
+                "Pure-group pools collapse to scale_g × spend; mixed pools are composition-weighted."
+            )
 
-        record_config_override(self.conn, self.current_day, 'set_targeted_ops_spend', 'targeted_ops_spend',
-                               {'targeted_spend': targeted_spend})
+        record_config_override(
+            self.conn, self.current_day, 'set_targeted_ops_spend', 'targeted_ops_spend',
+            {
+                'by_group': g,
+                'by_plan': p,
+                'by_group_plan': gp,
+                'by_customer': {str(k): v for k, v in c.items()},
+            },
+        )
         return ToolResult(True, result_msg, {
-            'targeted_spend': targeted_spend,
+            'by_group': g,
+            'by_plan': p,
+            'by_group_plan': gp,
+            'by_customer': {str(k): v for k, v in c.items()},
             'total_extra_per_day': total_extra,
+            # Legacy alias
+            'targeted_spend': g,
         })
 
     def set_targeted_dev_spend(self, targeted_spend: Dict[str, float]) -> ToolResult:
