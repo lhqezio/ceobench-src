@@ -570,7 +570,7 @@ class BenchmarkConfig:
     competitor_event_boost_min: float = 0.00219375  # v3.3y: 1.3× from v3.3x
     competitor_event_boost_max: float = 0.191953125 # v3.3y: 1.3× from v3.3x
     competitor_event_magnitude_scale_min: float = 1.0   # Scale at day 1 (v3.3t: anchor shifted from day 0)
-    competitor_event_magnitude_scale_max: float = 3.0   # v3.4i: 4.0→3.0 (reduce late-game amplification). Scale at (total_days - late_cutoff_days).
+    competitor_event_magnitude_scale_max: float = 2.0   # v3.4j: 3.0→2.0 (further reduce late-game amplification). Scale at (total_days - late_cutoff_days).
     # v3.3t: block competitor events in the last N days so bankruptcy can't be caused by a late-game boost
     competitor_event_late_cutoff_days: int = 30
 
