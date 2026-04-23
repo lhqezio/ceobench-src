@@ -386,6 +386,40 @@ class BashAgent(BaseAgent):
                         reasoning_content
                     )
 
+                # Validate tool_call arguments are parseable JSON BEFORE appending
+                # to conversation. Storing a tool_call with invalid-JSON args poisons
+                # the history: some OpenAI-compat servers (e.g. Together) reject every
+                # subsequent request with 400 "Input validation error" on replay.
+                json_validation_error = None
+                if assistant_msg.tool_calls:
+                    for tc in assistant_msg.tool_calls:
+                        if tc.function.arguments:
+                            try:
+                                json.loads(tc.function.arguments)
+                            except json.JSONDecodeError as je:
+                                json_validation_error = (
+                                    tc.function.name,
+                                    str(je),
+                                    tc.function.arguments[:300],
+                                )
+                                break
+
+                if json_validation_error:
+                    name, err, preview = json_validation_error
+                    print(f"  Invalid JSON in tool_call `{name}`: {err}. Feeding error back to LLM and regenerating.")
+                    self.conversation.append(Message(
+                        role='user',
+                        content=(
+                            f"Your previous response contained invalid JSON in the `{name}` tool_call arguments.\n"
+                            f"JSON decode error: {err}\n"
+                            f"Arguments started with: {preview}...\n\n"
+                            f"Valid JSON escape sequences are limited to: \\\" \\\\ \\/ \\b \\f \\n \\r \\t \\uXXXX. "
+                            f"Shell-style escapes like \\$ or \\! are NOT valid JSON. "
+                            f"Please re-emit the tool call with valid JSON."
+                        )
+                    ))
+                    continue
+
                 tool_calls_data = None
                 if assistant_msg.tool_calls:
                     tool_calls_data = []
@@ -413,14 +447,21 @@ class BashAgent(BaseAgent):
                 ))
 
                 if not assistant_msg.tool_calls:
-                    return None
+                    # LLM emitted no tool_call — feed feedback and retry.
+                    print("  LLM returned no tool_call. Feeding feedback and regenerating.")
+                    self.conversation.append(Message(
+                        role='user',
+                        content=(
+                            "You must call a tool to proceed. If you have nothing else to do this week, "
+                            "call `./novamind-operation next-week <cash_1wk> <cash_4wk> <cash_12wk>` via bash to advance."
+                        )
+                    ))
+                    continue
 
                 # Handle tool calls — execute first, skip rest
                 first_tc = assistant_msg.tool_calls[0]
-                try:
-                    args = json.loads(first_tc.function.arguments) if first_tc.function.arguments else {}
-                except json.JSONDecodeError:
-                    args = {}
+                # Safe to parse — we already validated above.
+                args = json.loads(first_tc.function.arguments) if first_tc.function.arguments else {}
 
                 # Skip extra parallel tool calls
                 for extra_tc in assistant_msg.tool_calls[1:]:
@@ -453,8 +494,25 @@ class BashAgent(BaseAgent):
                     del messages, tools
                     continue  # Loop back to retry
                 else:
+                    # Non-retryable error (4xx other than 429). No next-week fallback —
+                    # feed the error message back to the LLM as a user turn and regenerate.
+                    print(f"  Non-retryable error — feeding back to LLM for regeneration.")
                     print(f"Traceback: {traceback.format_exc()}")
-                    return Action(tool='bash', arguments={'command': './novamind-operation next-week'})
+                    self._consecutive_errors = getattr(self, '_consecutive_errors', 0) + 1
+                    wait_time = min(60, 5 * self._consecutive_errors)
+                    self.conversation.append(Message(
+                        role='user',
+                        content=(
+                            f"The previous API request failed with a non-retryable error:\n"
+                            f"{type(e).__name__}: {e}\n\n"
+                            f"Please re-emit your response. If the error mentions input validation, "
+                            f"check your tool_call arguments are valid JSON. "
+                            f"If the error mentions context length, produce a shorter response."
+                        )
+                    ))
+                    _time.sleep(wait_time)
+                    del messages, tools
+                    continue
 
     def _call_openai_responses(self) -> Optional[Action]:
         """Call OpenAI Responses API (required for reasoning models with tools)."""
@@ -567,25 +625,64 @@ class BashAgent(BaseAgent):
                                 reasoning_text.strip()
                             )
 
+                # Find function_call items
+                function_calls = [item for item in response.output
+                                  if getattr(item, 'type', '') == 'function_call']
+
+                # Validate each function_call's arguments JSON BEFORE storing. An
+                # invalid-JSON tool_call poisons the conversation (server-side
+                # validators reject every subsequent request on replay).
+                json_validation_error = None
+                for fc in function_calls:
+                    if fc.arguments:
+                        try:
+                            json.loads(fc.arguments)
+                        except json.JSONDecodeError as je:
+                            json_validation_error = (
+                                fc.name,
+                                str(je),
+                                fc.arguments[:300],
+                            )
+                            break
+
+                if json_validation_error:
+                    name, err, preview = json_validation_error
+                    print(f"  Invalid JSON in function_call `{name}`: {err}. Feeding error back to LLM and regenerating.")
+                    self.conversation.append(Message(
+                        role='user',
+                        content=(
+                            f"Your previous response contained invalid JSON in the `{name}` tool_call arguments.\n"
+                            f"JSON decode error: {err}\n"
+                            f"Arguments started with: {preview}...\n\n"
+                            f"Valid JSON escape sequences are limited to: \\\" \\\\ \\/ \\b \\f \\n \\r \\t \\uXXXX. "
+                            f"Shell-style escapes like \\$ or \\! are NOT valid JSON. "
+                            f"Please re-emit the tool call with valid JSON."
+                        )
+                    ))
+                    continue
+
                 # Store raw output items for conversation history reconstruction
                 self.conversation.append(Message(
                     role='assistant',
                     content=list(response.output),
                 ))
 
-                # Find function_call items
-                function_calls = [item for item in response.output
-                                  if getattr(item, 'type', '') == 'function_call']
-
                 if not function_calls:
-                    return None
+                    # LLM emitted no tool_call — feed feedback and retry.
+                    print("  LLM returned no function_call. Feeding feedback and regenerating.")
+                    self.conversation.append(Message(
+                        role='user',
+                        content=(
+                            "You must call a tool to proceed. If you have nothing else to do this week, "
+                            "call `./novamind-operation next-week <cash_1wk> <cash_4wk> <cash_12wk>` via bash to advance."
+                        )
+                    ))
+                    continue
 
                 # Handle tool calls — execute first, skip rest
                 first_fc = function_calls[0]
-                try:
-                    args = json.loads(first_fc.arguments) if first_fc.arguments else {}
-                except json.JSONDecodeError:
-                    args = {}
+                # Safe to parse — we already validated above.
+                args = json.loads(first_fc.arguments) if first_fc.arguments else {}
 
                 # Skip extra parallel tool calls
                 for extra_fc in function_calls[1:]:
@@ -615,8 +712,25 @@ class BashAgent(BaseAgent):
                     del input_items, tools
                     continue  # Loop back to retry
                 else:
+                    # Non-retryable error. No next-week fallback —
+                    # feed the error message back to the LLM and regenerate.
+                    print(f"  Non-retryable error — feeding back to LLM for regeneration.")
                     print(f"Traceback: {traceback.format_exc()}")
-                    return Action(tool='bash', arguments={'command': './novamind-operation next-week'})
+                    self._consecutive_errors = getattr(self, '_consecutive_errors', 0) + 1
+                    wait_time = min(60, 5 * self._consecutive_errors)
+                    self.conversation.append(Message(
+                        role='user',
+                        content=(
+                            f"The previous API request failed with a non-retryable error:\n"
+                            f"{type(e).__name__}: {e}\n\n"
+                            f"Please re-emit your response. If the error mentions input validation, "
+                            f"check your tool_call arguments are valid JSON. "
+                            f"If the error mentions context length, produce a shorter response."
+                        )
+                    ))
+                    _time.sleep(wait_time)
+                    del input_items, tools
+                    continue
 
     def _call_anthropic(self) -> Optional[Action]:
         """Call Anthropic/Bedrock API and parse the response."""

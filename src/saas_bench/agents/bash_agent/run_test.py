@@ -804,8 +804,14 @@ __pycache__/
                 _day_reasoning_tokens += self.agent.last_reasoning_tokens
 
                 if action is None:
-                    # No action — force next-week via bash
-                    action = Action(tool='bash', arguments={'command': './novamind-operation next-week'})
+                    # With the agent's retry-with-feedback loop, _call_* should no
+                    # longer return None. If we still get here, something is very
+                    # wrong — raise so the run fails loudly instead of silently
+                    # spamming a broken next-week command.
+                    raise RuntimeError(
+                        "Agent.act() returned None despite retry-with-feedback loop. "
+                        "This indicates a bug in the agent scaffold — please investigate."
+                    )
 
                 tool_name = action.tool
                 tool_args_preview = ""
