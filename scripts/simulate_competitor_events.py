@@ -118,7 +118,7 @@ def _fmt(events, cumulative):
 
 if __name__ == "__main__":
     events, cumulative, config = simulate(seed=42, total_days=500)
-    print(f"Config: v3.4j — scale_max={config.competitor_event_magnitude_scale_max}, individual_ops_scale={config.individual_ops_scale}, enterprise_ops_scale={config.enterprise_ops_scale}")
+    print(f"Config: v3.4l — scale_max={config.competitor_event_magnitude_scale_max}, mean_interval={config.competitor_event_mean_interval} (0.5× from v3.4k=4.286; 0.35× from v3.4j=3), individual_ops_scale={config.individual_ops_scale}, enterprise_ops_scale={config.enterprise_ops_scale}")
     print(f"Grace: {config.drift_grace_period_days}d | late_cutoff: {config.competitor_event_late_cutoff_days}d | active window: [{config.drift_grace_period_days}, {500 - config.competitor_event_late_cutoff_days}]")
     print(f"Intervals — base mean/min: {config.competitor_event_mean_interval}/{config.competitor_event_min_interval}; first-half (×1.5): {config.competitor_event_mean_interval*1.5}/{config.competitor_event_min_interval*1.5}")
     print()

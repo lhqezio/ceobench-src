@@ -559,8 +559,8 @@ class BenchmarkConfig:
     # Magnitude: scales linearly from scale_min at day 1 to scale_max at (total_days - late_cutoff_days).
     # Boosts are blocked entirely before drift_grace_period_days and after (total_days - late_cutoff_days).
     # Early game = small disruptions, late game = major market shifts, very late = no more shocks.
-    competitor_event_mean_interval: int = 3       # v3.4e: 3× freq from v3.4d (was 8)
-    competitor_event_min_interval: int = 1        # v3.4e: 3× freq from v3.4d (was 3)
+    competitor_event_mean_interval: float = 8.572  # v3.4l: 4.286→8.572 (freq ×0.5 from v3.4k; = 0.35× of v3.4j baseline=3).
+    competitor_event_min_interval: int = 1         # v3.4e: 3× freq from v3.4d (was 3). Kept at 1 in v3.4k (floor not binding).
     competitor_event_post_days: int = 3           # Days of competitor-themed social posts after event
     competitor_event_posts_per_day: int = 2       # Posts/day during event window
     # Boost distribution: lognormal(mu, sigma) — BASE values (1× magnitude)
@@ -570,7 +570,7 @@ class BenchmarkConfig:
     competitor_event_boost_min: float = 0.00219375  # v3.3y: 1.3× from v3.3x
     competitor_event_boost_max: float = 0.191953125 # v3.3y: 1.3× from v3.3x
     competitor_event_magnitude_scale_min: float = 1.0   # Scale at day 1 (v3.3t: anchor shifted from day 0)
-    competitor_event_magnitude_scale_max: float = 2.0   # v3.4j: 3.0→2.0 (further reduce late-game amplification). Scale at (total_days - late_cutoff_days).
+    competitor_event_magnitude_scale_max: float = 4.0   # v3.4k: 2.0→4.0 (restore 1-4 scale range, matches v3.4f/g/h). Scale at (total_days - late_cutoff_days).
     # v3.3t: block competitor events in the last N days so bankruptcy can't be caused by a late-game boost
     competitor_event_late_cutoff_days: int = 30
 
