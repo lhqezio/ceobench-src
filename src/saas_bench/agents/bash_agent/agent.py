@@ -805,12 +805,13 @@ class BashAgent(BaseAgent):
             # tokens (default cap is 64K). Required when max_tokens > 64000.
             'extra_headers': {'anthropic-beta': 'output-128k-2025-02-19'},
         }
-        use_streaming = False
+        # Anthropic SDK refuses non-streaming when max_tokens implies > 10min
+        # budget (raised in _calculate_nonstreaming_timeout). Always streams
+        # for max_tokens > 64000.
+        use_streaming = api_kwargs['max_tokens'] > 64000
         if self.reasoning_effort and self.reasoning_effort in _VALID_EFFORTS:
             api_kwargs['thinking'] = {'type': 'adaptive'}
             api_kwargs['output_config'] = {'effort': self.reasoning_effort}
-            # Stream to avoid SDK's non-streaming 10-minute budget refusal
-            # when thinking can produce long outputs.
             use_streaming = True
 
         try:

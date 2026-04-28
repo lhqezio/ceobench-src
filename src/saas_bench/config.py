@@ -15,6 +15,7 @@ class ChurnReason(Enum):
     QUALITY_CHANGE = "quality_change"        # Model quality insufficient vs expectations
     PRICE_SENSITIVITY = "price_sensitivity"  # c_max decreased relative to price
     EXTENDED_ISSUE = "extended_issue"        # Unresolved issues for extended period
+    INVOLUNTARY = "involuntary"              # v3.4ab: real-world floor churn (billing failures, M&A, etc.); no rep/social impact
 
 
 @dataclass
@@ -186,34 +187,34 @@ AD_CHANNELS: Dict[str, AdChannel] = {
         name='Social Media Ads',
         description='Facebook, Instagram, TikTok — reaches individuals via feeds and influencer content',
         leads_per_1000_dollars={
-            'S1': 5603.0274,  # Best channel for S1: viral social discovery (270× base)
-            'S2': 2966.3086,  # Moderate: some professionals on social (270× base)
-            'S3': 1845.7031,  # Lower: power users prefer technical content (270× base)
-            'E1': 0.6396,  # Very low: enterprises don't buy from TikTok; whole-company acquisition (÷2)
-            'E2': 0.3857,  # Negligible: professional services avoid social ads entirely (÷2)
-            'E3': 0.1979, # Negligible: C-level doesn't buy from Instagram (÷2)
+            'S1': 1008.5449,  # Best channel for S1: viral social discovery (270× base)
+            'S2': 533.9355,  # Moderate: some professionals on social (270× base)
+            'S3': 332.2266,  # Lower: power users prefer technical content (270× base)
+            'E1': 0.2878,  # Very low: enterprises don't buy from TikTok; whole-company acquisition (÷2)
+            'E2': 0.1736,  # Negligible: professional services avoid social ads entirely (÷2)
+            'E3': 0.0891, # Negligible: C-level doesn't buy from Instagram (÷2)
             # Discoverable individual groups
-            'D_S01': 4614.2577,  # Niche Creators: highly active on social (270× base)
-            'D_S02': 1120.6055,  # Academic Researchers: rarely on social for tools (270× base)
-            'D_S03': 2768.5548,  # Non-Profit Workers: community-oriented social (270× base)
-            'D_S04': 3427.7344,  # Small Agency Teams: manage social for clients (270× base)
-            'D_S05': 3625.4883,  # Indie Game Devs: active on TikTok/Twitter (270× base)
-            'D_S06': 2109.3750,  # Freelance Writers: moderate social presence (270× base)
-            'D_S07': 1318.3594,  # Data Analysts: prefer technical content (270× base)
-            'D_S08': 5273.4375,  # Social Media Managers: live on social platforms (270× base)
-            'D_S09': 2966.3086,  # UX Designers: active on design-focused social (270× base)
-            'D_S10': 3955.0781,  # Music Producers: active on Instagram/TikTok (270× base)
+            'D_S01': 830.5664,  # Niche Creators: highly active on social (270× base)
+            'D_S02': 201.7090,  # Academic Researchers: rarely on social for tools (270× base)
+            'D_S03': 498.3399,  # Non-Profit Workers: community-oriented social (270× base)
+            'D_S04': 616.9922,  # Small Agency Teams: manage social for clients (270× base)
+            'D_S05': 652.5879,  # Indie Game Devs: active on TikTok/Twitter (270× base)
+            'D_S06': 379.6875,  # Freelance Writers: moderate social presence (270× base)
+            'D_S07': 237.3047,  # Data Analysts: prefer technical content (270× base)
+            'D_S08': 949.2188,  # Social Media Managers: live on social platforms (270× base)
+            'D_S09': 533.9355,  # UX Designers: active on design-focused social (270× base)
+            'D_S10': 711.9141,  # Music Producers: active on Instagram/TikTok (270× base)
             # Discoverable enterprise groups (account-level: 1.5× base)
-            'D_E01': 0.1270,  # Government Agencies: zero social media procurement (÷2)
-            'D_E02': 0.3249, # Educational Institutions: some ed-tech social presence (÷2)
-            'D_E03': 0.1979, # Healthcare Networks: HIPAA-conscious, avoid social (÷2)
-            'D_E04': 0.1270,  # Regional Banks: conservative, no social buying (÷2)
-            'D_E05': 0.1979, # Insurance Brokers: minimal social presence (÷2)
-            'D_E06': 0.2564,  # Construction Firms: field workers on Facebook (÷2)
-            'D_E07': 0.3249, # Telecom Operators: some digital marketing awareness (÷2)
-            'D_E08': 0.1270,  # Energy Companies: safety-focused, no social buying (÷2)
-            'D_E09': 0.3857,  # Real Estate Groups: active on social for listings (÷2)
-            'D_E10': 0.1270,  # Shipping Lines: operational focus, no social (÷2)
+            'D_E01': 0.0571,  # Government Agencies: zero social media procurement (÷2)
+            'D_E02': 0.1462, # Educational Institutions: some ed-tech social presence (÷2)
+            'D_E03': 0.0891, # Healthcare Networks: HIPAA-conscious, avoid social (÷2)
+            'D_E04': 0.0571,  # Regional Banks: conservative, no social buying (÷2)
+            'D_E05': 0.0891, # Insurance Brokers: minimal social presence (÷2)
+            'D_E06': 0.1154,  # Construction Firms: field workers on Facebook (÷2)
+            'D_E07': 0.1462, # Telecom Operators: some digital marketing awareness (÷2)
+            'D_E08': 0.0571,  # Energy Companies: safety-focused, no social buying (÷2)
+            'D_E09': 0.1736,  # Real Estate Groups: active on social for listings (÷2)
+            'D_E10': 0.0571,  # Shipping Lines: operational focus, no social (÷2)
         }
     ),
     'search_ads': AdChannel(
@@ -221,34 +222,34 @@ AD_CHANNELS: Dict[str, AdChannel] = {
         name='Search Engine Ads',
         description='Google Ads, Bing — reaches S2/S3 who research tools via search',
         leads_per_1000_dollars={
-            'S1': 2307.1289,  # Moderate: search for deals and alternatives (270× base)
-            'S2': 2504.8827,  # Best search channel for S2: thorough research (270× base)
-            'S3': 1516.1132,  # Strong: power users search for technical solutions (270× base)
-            'E1': 0.7689,  # Very low: procurement team vendor comparison; whole-company sale (÷2)
-            'E2': 0.6396,  # Very low: compliance research leads to long eval cycle (÷2)
-            'E3': 0.3857,  # Negligible: strategic partners prefer referrals over search (÷2)
+            'S1': 415.2832,  # Moderate: search for deals and alternatives (270× base)
+            'S2': 450.8789,  # Best search channel for S2: thorough research (270× base)
+            'S3': 272.9004,  # Strong: power users search for technical solutions (270× base)
+            'E1': 0.3460,  # Very low: procurement team vendor comparison; whole-company sale (÷2)
+            'E2': 0.2878,  # Very low: compliance research leads to long eval cycle (÷2)
+            'E3': 0.1736,  # Negligible: strategic partners prefer referrals over search (÷2)
             # Discoverable individual groups
-            'D_S01': 1845.7031,  # Niche Creators: search for creative tools (270× base)
-            'D_S02': 2636.7188,  # Academic Researchers: heavy tool search (270× base)
-            'D_S03': 1713.8673,  # Non-Profit Workers: search for affordable tools (270× base)
-            'D_S04': 2109.3750,  # Small Agency Teams: search for PM tools (270× base)
-            'D_S05': 1977.5390,  # Indie Game Devs: search for dev tools (270× base)
-            'D_S06': 2504.8827,  # Freelance Writers: search for writing tools (270× base)
-            'D_S07': 2307.1289,  # Data Analysts: search for analytics tools (270× base)
-            'D_S08': 1516.1132,  # Social Media Managers: less search, more social (270× base)
-            'D_S09': 1977.5390,  # UX Designers: search for prototyping tools (270× base)
-            'D_S10': 1186.5235,  # Music Producers: niche search, prefer community (270× base)
+            'D_S01': 332.2266,  # Niche Creators: search for creative tools (270× base)
+            'D_S02': 474.6094,  # Academic Researchers: heavy tool search (270× base)
+            'D_S03': 308.4961,  # Non-Profit Workers: search for affordable tools (270× base)
+            'D_S04': 379.6875,  # Small Agency Teams: search for PM tools (270× base)
+            'D_S05': 355.9570,  # Indie Game Devs: search for dev tools (270× base)
+            'D_S06': 450.8789,  # Freelance Writers: search for writing tools (270× base)
+            'D_S07': 415.2832,  # Data Analysts: search for analytics tools (270× base)
+            'D_S08': 272.9004,  # Social Media Managers: less search, more social (270× base)
+            'D_S09': 355.9570,  # UX Designers: search for prototyping tools (270× base)
+            'D_S10': 213.5742,  # Music Producers: niche search, prefer community (270× base)
             # Discoverable enterprise groups (account-level: 1.5× base)
-            'D_E01': 0.5126,  # Government Agencies: formal procurement, some vendor search (÷2)
-            'D_E02': 0.6396,  # Educational Institutions: ed-tech evaluation via search (÷2)
-            'D_E03': 0.5811, # Healthcare Networks: compliance-focused vendor search (÷2)
-            'D_E04': 0.4517, # Regional Banks: conservative, limited search (÷2)
-            'D_E05': 0.5126,  # Insurance Brokers: vendor comparison research (÷2)
-            'D_E06': 0.3857,  # Construction Firms: less tech-focused search (÷2)
-            'D_E07': 0.6396,  # Telecom Operators: tech-savvy vendor evaluation (÷2)
-            'D_E08': 0.4517, # Energy Companies: specialized vendor search (÷2)
-            'D_E09': 0.5811, # Real Estate Groups: PropTech search (÷2)
-            'D_E10': 0.3857,  # Shipping Lines: logistics tech vendor search (÷2)
+            'D_E01': 0.2306,  # Government Agencies: formal procurement, some vendor search (÷2)
+            'D_E02': 0.2878,  # Educational Institutions: ed-tech evaluation via search (÷2)
+            'D_E03': 0.2615, # Healthcare Networks: compliance-focused vendor search (÷2)
+            'D_E04': 0.2032, # Regional Banks: conservative, limited search (÷2)
+            'D_E05': 0.2306,  # Insurance Brokers: vendor comparison research (÷2)
+            'D_E06': 0.1736,  # Construction Firms: less tech-focused search (÷2)
+            'D_E07': 0.2878,  # Telecom Operators: tech-savvy vendor evaluation (÷2)
+            'D_E08': 0.2032, # Energy Companies: specialized vendor search (÷2)
+            'D_E09': 0.2615, # Real Estate Groups: PropTech search (÷2)
+            'D_E10': 0.1736,  # Shipping Lines: logistics tech vendor search (÷2)
         }
     ),
     'linkedin': AdChannel(
@@ -256,34 +257,34 @@ AD_CHANNELS: Dict[str, AdChannel] = {
         name='LinkedIn Ads',
         description='Professional network — best channel for reaching enterprise decision makers',
         leads_per_1000_dollars={
-            'S1': 922.8515,  # Low: freelancers less active on LinkedIn (270× base)
-            'S2': 1186.5235,  # Moderate: professionals browse LinkedIn (270× base)
-            'S3': 659.1798,  # Low: devs prefer Twitter/HN over LinkedIn (270× base)
-            'E1': 0.7689,  # Best enterprise channel: VPs browse LinkedIn; account acquisition (÷2)
-            'E2': 0.7006, # Strong: thought leadership reaches quality buyers (÷2)
-            'E3': 0.5126,  # Moderate: C-level executives network here (÷2)
+            'S1': 166.1133,  # Low: freelancers less active on LinkedIn (270× base)
+            'S2': 213.5742,  # Moderate: professionals browse LinkedIn (270× base)
+            'S3': 118.6524,  # Low: devs prefer Twitter/HN over LinkedIn (270× base)
+            'E1': 0.3460,  # Best enterprise channel: VPs browse LinkedIn; account acquisition (÷2)
+            'E2': 0.3152, # Strong: thought leadership reaches quality buyers (÷2)
+            'E3': 0.2306,  # Moderate: C-level executives network here (÷2)
             # Discoverable individual groups
-            'D_S01': 461.4257,  # Niche Creators: minimal LinkedIn presence (270× base)
-            'D_S02': 988.7695,  # Academic Researchers: some academic networking (270× base)
-            'D_S03': 856.9336,  # Non-Profit Workers: LinkedIn for grants (270× base)
-            'D_S04': 1186.5235,  # Small Agency Teams: LinkedIn for clients (270× base)
-            'D_S05': 329.5899,  # Indie Game Devs: very low LinkedIn activity (270× base)
-            'D_S06': 1120.6055,  # Freelance Writers: LinkedIn for gigs (270× base)
-            'D_S07': 1318.3594,  # Data Analysts: active on LinkedIn professionally (270× base)
-            'D_S08': 725.0976,  # Social Media Managers: LinkedIn for B2B (270× base)
-            'D_S09': 922.8515,  # UX Designers: portfolio + job networking (270× base)
-            'D_S10': 329.5899,  # Music Producers: minimal LinkedIn presence (270× base)
+            'D_S01': 83.0566,  # Niche Creators: minimal LinkedIn presence (270× base)
+            'D_S02': 177.9785,  # Academic Researchers: some academic networking (270× base)
+            'D_S03': 154.2480,  # Non-Profit Workers: LinkedIn for grants (270× base)
+            'D_S04': 213.5742,  # Small Agency Teams: LinkedIn for clients (270× base)
+            'D_S05': 59.3262,  # Indie Game Devs: very low LinkedIn activity (270× base)
+            'D_S06': 201.7090,  # Freelance Writers: LinkedIn for gigs (270× base)
+            'D_S07': 237.3047,  # Data Analysts: active on LinkedIn professionally (270× base)
+            'D_S08': 130.5176,  # Social Media Managers: LinkedIn for B2B (270× base)
+            'D_S09': 166.1133,  # UX Designers: portfolio + job networking (270× base)
+            'D_S10': 59.3262,  # Music Producers: minimal LinkedIn presence (270× base)
             # Discoverable enterprise groups (account-level: 1.5× base)
-            'D_E01': 0.6396,  # Government Agencies: contracting officers on LinkedIn (÷2)
-            'D_E02': 0.5126,  # Educational Institutions: deans/IT on LinkedIn (÷2)
-            'D_E03': 0.7689,  # Healthcare Networks: C-suite healthcare on LinkedIn (÷2)
-            'D_E04': 0.7006, # Regional Banks: banking executives on LinkedIn (÷2)
-            'D_E05': 0.6396,  # Insurance Brokers: professional networking (÷2)
-            'D_E06': 0.3857,  # Construction Firms: less LinkedIn activity (÷2)
-            'D_E07': 0.8279, # Telecom Operators: tech executives active on LinkedIn (÷2)
-            'D_E08': 0.7006, # Energy Companies: sustainability officers on LinkedIn (÷2)
-            'D_E09': 0.6396,  # Real Estate Groups: deal-driven LinkedIn networking (÷2)
-            'D_E10': 0.4517, # Shipping Lines: logistics execs moderate LinkedIn (÷2)
+            'D_E01': 0.2878,  # Government Agencies: contracting officers on LinkedIn (÷2)
+            'D_E02': 0.2306,  # Educational Institutions: deans/IT on LinkedIn (÷2)
+            'D_E03': 0.3460,  # Healthcare Networks: C-suite healthcare on LinkedIn (÷2)
+            'D_E04': 0.3152, # Regional Banks: banking executives on LinkedIn (÷2)
+            'D_E05': 0.2878,  # Insurance Brokers: professional networking (÷2)
+            'D_E06': 0.1736,  # Construction Firms: less LinkedIn activity (÷2)
+            'D_E07': 0.3725, # Telecom Operators: tech executives active on LinkedIn (÷2)
+            'D_E08': 0.3152, # Energy Companies: sustainability officers on LinkedIn (÷2)
+            'D_E09': 0.2878,  # Real Estate Groups: deal-driven LinkedIn networking (÷2)
+            'D_E10': 0.2032, # Shipping Lines: logistics execs moderate LinkedIn (÷2)
         }
     ),
     'content_marketing': AdChannel(
@@ -291,34 +292,34 @@ AD_CHANNELS: Dict[str, AdChannel] = {
         name='Content Marketing',
         description='Blog posts, SEO, whitepapers — reaches S2/S3/E2 through detailed evaluation content',
         leads_per_1000_dollars={
-            'S1': 2307.1289,  # Moderate: S1 wants quick solutions, not long reads (270× base)
-            'S2': 2768.5548,  # Very strong: S2 reads reviews, comparisons (270× base)
-            'S3': 1977.5390,  # Strong: S3 trusts technical blog posts (270× base)
-            'E1': 0.9570, # Low: vendor comparison content drives account-level interest (÷2)
-            'E2': 1.0840, # Best enterprise channel for E2: whitepapers + case studies (÷2)
-            'E3': 0.7006, # Low: strategic content resonates but long sales cycle (÷2)
+            'S1': 415.2832,  # Moderate: S1 wants quick solutions, not long reads (270× base)
+            'S2': 498.3399,  # Very strong: S2 reads reviews, comparisons (270× base)
+            'S3': 355.9570,  # Strong: S3 trusts technical blog posts (270× base)
+            'E1': 0.4306, # Low: vendor comparison content drives account-level interest (÷2)
+            'E2': 0.4878, # Best enterprise channel for E2: whitepapers + case studies (÷2)
+            'E3': 0.3152, # Low: strategic content resonates but long sales cycle (÷2)
             # Discoverable individual groups
-            'D_S01': 1713.8673,  # Niche Creators: tutorials and tool reviews (270× base)
-            'D_S02': 2966.3086,  # Academic Researchers: best channel — papers (270× base)
-            'D_S03': 1845.7031,  # Non-Profit Workers: case studies (270× base)
-            'D_S04': 2504.8827,  # Small Agency Teams: workflow blogs (270× base)
-            'D_S05': 2109.3750,  # Indie Game Devs: dev blogs (270× base)
-            'D_S06': 3098.1445,  # Freelance Writers: writing tool reviews (270× base)
-            'D_S07': 2636.7188,  # Data Analysts: technical tutorials (270× base)
-            'D_S08': 1845.7031,  # Social Media Managers: platform strategy (270× base)
-            'D_S09': 2307.1289,  # UX Designers: design process blogs (270× base)
-            'D_S10': 1318.3594,  # Music Producers: production technique (270× base)
+            'D_S01': 308.4961,  # Niche Creators: tutorials and tool reviews (270× base)
+            'D_S02': 533.9355,  # Academic Researchers: best channel — papers (270× base)
+            'D_S03': 332.2266,  # Non-Profit Workers: case studies (270× base)
+            'D_S04': 450.8789,  # Small Agency Teams: workflow blogs (270× base)
+            'D_S05': 379.6875,  # Indie Game Devs: dev blogs (270× base)
+            'D_S06': 557.6660,  # Freelance Writers: writing tool reviews (270× base)
+            'D_S07': 474.6094,  # Data Analysts: technical tutorials (270× base)
+            'D_S08': 332.2266,  # Social Media Managers: platform strategy (270× base)
+            'D_S09': 415.2832,  # UX Designers: design process blogs (270× base)
+            'D_S10': 237.3047,  # Music Producers: production technique (270× base)
             # Discoverable enterprise groups (account-level: 1.5× base)
-            'D_E01': 0.8959,  # Government Agencies: compliance whitepapers (÷2)
-            'D_E02': 1.1524,  # Educational Institutions: ed-tech case studies (÷2)
-            'D_E03': 1.0254,  # Healthcare Networks: clinical workflow whitepapers (÷2)
-            'D_E04': 0.8279, # Regional Banks: fintech comparison content (÷2)
-            'D_E05': 0.8959,  # Insurance Brokers: claims efficiency case studies (÷2)
-            'D_E06': 0.6396,  # Construction Firms: less content-driven (÷2)
-            'D_E07': 0.9570, # Telecom Operators: tech evaluation whitepapers (÷2)
-            'D_E08': 1.0254,  # Energy Companies: sustainability/efficiency content (÷2)
-            'D_E09': 0.8279, # Real Estate Groups: PropTech case studies (÷2)
-            'D_E10': 0.7006, # Shipping Lines: logistics optimization content (÷2)
+            'D_E01': 0.4032,  # Government Agencies: compliance whitepapers (÷2)
+            'D_E02': 0.5186,  # Educational Institutions: ed-tech case studies (÷2)
+            'D_E03': 0.4615,  # Healthcare Networks: clinical workflow whitepapers (÷2)
+            'D_E04': 0.3725, # Regional Banks: fintech comparison content (÷2)
+            'D_E05': 0.4032,  # Insurance Brokers: claims efficiency case studies (÷2)
+            'D_E06': 0.2878,  # Construction Firms: less content-driven (÷2)
+            'D_E07': 0.4306, # Telecom Operators: tech evaluation whitepapers (÷2)
+            'D_E08': 0.4615,  # Energy Companies: sustainability/efficiency content (÷2)
+            'D_E09': 0.3725, # Real Estate Groups: PropTech case studies (÷2)
+            'D_E10': 0.3152, # Shipping Lines: logistics optimization content (÷2)
         }
     ),
     'referral_program': AdChannel(
@@ -326,34 +327,34 @@ AD_CHANNELS: Dict[str, AdChannel] = {
         name='Referral Program',
         description='Customer referral incentives — cheapest channel, powered by satisfied users sharing',
         leads_per_1000_dollars={
-            'S1': 5932.6172,  # Very high: share deals with friends for credits (270× base)
-            'S2': 4284.6680,  # Very high: recommend to professional colleagues (270× base)
-            'S3': 3164.0625,  # High: tech communities share tools heavily (270× base)
-            'E1': 1.7944,  # Low: internal referrals between departments; whole-company deals (÷2)
-            'E2': 1.6064, # Low: peer recommendations in professional circles (÷2)
-            'E3': 1.2818,  # Low: executive referral networks; long eval cycles (÷2)
+            'S1': 1067.8711,  # Very high: share deals with friends for credits (270× base)
+            'S2': 771.2402,  # Very high: recommend to professional colleagues (270× base)
+            'S3': 569.5312,  # High: tech communities share tools heavily (270× base)
+            'E1': 0.8075,  # Low: internal referrals between departments; whole-company deals (÷2)
+            'E2': 0.7229, # Low: peer recommendations in professional circles (÷2)
+            'E3': 0.5768,  # Low: executive referral networks; long eval cycles (÷2)
             # Discoverable individual groups
-            'D_S01': 4943.8476,  # Niche Creators: strong community sharing (270× base)
-            'D_S02': 3427.7344,  # Academic Researchers: recommend to lab colleagues (270× base)
-            'D_S03': 3955.0781,  # Non-Profit Workers: mission-driven sharing (270× base)
-            'D_S04': 3625.4883,  # Small Agency Teams: recommend to partners (270× base)
-            'D_S05': 4284.6680,  # Indie Game Devs: dev communities share (270× base)
-            'D_S06': 2768.5548,  # Freelance Writers: moderate referral culture (270× base)
-            'D_S07': 3098.1445,  # Data Analysts: share in analytics communities (270× base)
-            'D_S08': 4614.2577,  # Social Media Managers: natural sharers (270× base)
-            'D_S09': 3427.7344,  # UX Designers: design community recs (270× base)
-            'D_S10': 3823.2423,  # Music Producers: strong community referrals (270× base)
+            'D_S01': 889.8926,  # Niche Creators: strong community sharing (270× base)
+            'D_S02': 616.9922,  # Academic Researchers: recommend to lab colleagues (270× base)
+            'D_S03': 711.9141,  # Non-Profit Workers: mission-driven sharing (270× base)
+            'D_S04': 652.5879,  # Small Agency Teams: recommend to partners (270× base)
+            'D_S05': 771.2402,  # Indie Game Devs: dev communities share (270× base)
+            'D_S06': 498.3399,  # Freelance Writers: moderate referral culture (270× base)
+            'D_S07': 557.6660,  # Data Analysts: share in analytics communities (270× base)
+            'D_S08': 830.5664,  # Social Media Managers: natural sharers (270× base)
+            'D_S09': 616.9922,  # UX Designers: design community recs (270× base)
+            'D_S10': 688.1836,  # Music Producers: strong community referrals (270× base)
             # Discoverable enterprise groups (account-level: 1.5× base)
-            'D_E01': 0.9570,  # Government Agencies: slow procurement; inter-agency referrals rare (÷2)
-            'D_E02': 1.4086,   # Educational Institutions: academic peer recommendations (÷2)
-            'D_E03': 1.1524,   # Healthcare Networks: clinical peer networks; compliance barriers (÷2)
-            'D_E04': 1.0254,   # Regional Banks: consortium referrals; regulatory hurdles (÷2)
-            'D_E05': 1.2818,   # Insurance Brokers: industry peer networks; compliance review (÷2)
-            'D_E06': 1.1524,   # Construction Firms: contractor network referrals (÷2)
-            'D_E07': 1.2818,   # Telecom Operators: industry peer sharing (÷2)
-            'D_E08': 0.9570,  # Energy Companies: utility consortium; long eval cycles (÷2)
-            'D_E09': 1.4086,   # Real Estate Groups: deal-network referrals (÷2)
-            'D_E10': 0.8959,   # Shipping Lines: port/logistics network; few players (÷2)
+            'D_E01': 0.4306,  # Government Agencies: slow procurement; inter-agency referrals rare (÷2)
+            'D_E02': 0.6339,   # Educational Institutions: academic peer recommendations (÷2)
+            'D_E03': 0.5186,   # Healthcare Networks: clinical peer networks; compliance barriers (÷2)
+            'D_E04': 0.4615,   # Regional Banks: consortium referrals; regulatory hurdles (÷2)
+            'D_E05': 0.5768,   # Insurance Brokers: industry peer networks; compliance review (÷2)
+            'D_E06': 0.5186,   # Construction Firms: contractor network referrals (÷2)
+            'D_E07': 0.5768,   # Telecom Operators: industry peer sharing (÷2)
+            'D_E08': 0.4306,  # Energy Companies: utility consortium; long eval cycles (÷2)
+            'D_E09': 0.6339,   # Real Estate Groups: deal-network referrals (÷2)
+            'D_E10': 0.4032,   # Shipping Lines: port/logistics network; few players (÷2)
         }
     ),
 }
@@ -705,6 +706,14 @@ class BenchmarkConfig:
     # Reality: Locked-in unhappy customers are the loudest critics (Gartner 2024, G2 review analysis)
     contract_dissatisfaction_reputation_multiplier: float = 1.5  # 1.5× reputation damage weight
     contract_dissatisfaction_social_post_multiplier: float = 2.0  # 2× social media post probability
+
+    # === V3.4AB: INVOLUNTARY CHURN ===
+    # Real-world "floor" churn (billing failures, M&A, employee turnover, life changes, etc.).
+    # Each month, draw a global μ_t per group from Normal(group.involuntary_churn_mean,
+    # group.involuntary_churn_std), clipped ≥ 0. At each renewal event (monthly billing for
+    # individuals; contract expiry for enterprises), flip Bernoulli(μ_t). On hit, mark the
+    # customer cancelled with churn_reason='involuntary' — no reputation damage, no social post.
+    enable_involuntary_churn: bool = True
 
 
     # === V2: SETTLEMENT PARAMETERS ===
@@ -1416,6 +1425,17 @@ class CustomerGroupConfig:
     ads_return_sensitivity_mean: float = 0.15   # Mean daily $ return per unit ads strength
     ads_return_sensitivity_std: float = 0.05    # Within-group variance
 
+    # v3.4ab: Real-world floor churn ("involuntary" — billing failures, M&A, employee turnover,
+    # life changes, budget cuts, etc.). Each simulated month, a global μ_t is drawn from
+    # Normal(involuntary_churn_mean, involuntary_churn_std) (clipped ≥ 0). Every renewal event
+    # for this group flips a Bernoulli(μ_t) coin; on hit the customer cancels with reason='involuntary'.
+    # Does NOT impact reputation or generate social media posts.
+    #
+    # Defaults are conservative — actual values are set per-group below to match real-world
+    # benchmarks (Recurly 2024, ChartMogul 2024, ProfitWell, KeyBanc 2024, Pacific Crest 2024).
+    involuntary_churn_mean: float = 0.02   # Per-renewal probability of not renewing (default 2%/mo)
+    involuntary_churn_std: float = 0.005   # Monthly resampling noise
+
 
 # Small customer groups
 # Reality-matched to 2024-2025 AI tool market research and user behavior studies
@@ -1539,6 +1559,9 @@ CUSTOMER_GROUP_S1 = CustomerGroupConfig(
     ads_quality_sensitivity_std=0.04,  # (0.5x noise)
     ads_return_sensitivity_mean=0.08,   # Low ad revenue — light engagement
     ads_return_sensitivity_std=0.03,   # (0.5x noise)
+    # v3.4ab: B2C freelancers/students — Recurly 2024 5-7%/mo; cash-flow churn
+    involuntary_churn_mean=0.055,
+    involuntary_churn_std=0.015,
 )
 
 # S2: Quality-focused professionals (lawyers, consultants, healthcare)
@@ -1592,6 +1615,9 @@ CUSTOMER_GROUP_S2 = CustomerGroupConfig(
     ads_quality_sensitivity_std=0.05,  # (0.5x noise)
     ads_return_sensitivity_mean=0.15,   # Moderate ad revenue — active usage
     ads_return_sensitivity_std=0.05,   # (0.5x noise)
+    # v3.4ab: ChartMogul prosumer SaaS 3-4%/mo
+    involuntary_churn_mean=0.035,
+    involuntary_churn_std=0.010,
 )
 
 # S3: Power users and developers
@@ -1646,6 +1672,9 @@ CUSTOMER_GROUP_S3 = CustomerGroupConfig(
     ads_quality_sensitivity_std=0.03,  # (0.5x noise)
     ads_return_sensitivity_mean=0.12,   # Moderate ad revenue — decent engagement depth
     ads_return_sensitivity_std=0.04,   # (0.5x noise)
+    # v3.4ab: Sacra 2024 dev tools 4-5%/mo; trial-and-switch culture
+    involuntary_churn_mean=0.045,
+    involuntary_churn_std=0.012,
 )
 
 # Enterprise customer groups
@@ -1730,6 +1759,9 @@ CUSTOMER_GROUP_E1 = CustomerGroupConfig(
     ads_quality_sensitivity_std=0.03,  # (0.5x noise)
     ads_return_sensitivity_mean=0.20,   # High ad revenue — many seats, high engagement
     ads_return_sensitivity_std=0.06,   # (0.5x noise)
+    # v3.4ab: KeyBanc 2024 mid-market 1-2%/mo; per-renewal cycle
+    involuntary_churn_mean=0.015,
+    involuntary_churn_std=0.005,
 )
 
 # E2: Quality-first enterprises (law firms, biotech, financial services)
@@ -1789,6 +1821,9 @@ CUSTOMER_GROUP_E2 = CustomerGroupConfig(
     ads_quality_sensitivity_std=0.06,  # (0.5x noise)
     ads_return_sensitivity_mean=0.25,   # High ad revenue — very high engagement per seat
     ads_return_sensitivity_std=0.07,   # (0.5x noise)
+    # v3.4ab: Pacific Crest premium B2B 0.5-1%/mo; per-renewal cycle
+    involuntary_churn_mean=0.008,
+    involuntary_churn_std=0.003,
 )
 
 # E3: Strategic partners (large enterprises, Fortune 500)
@@ -1848,6 +1883,9 @@ CUSTOMER_GROUP_E3 = CustomerGroupConfig(
     ads_quality_sensitivity_std=0.05,  # (0.5x noise)
     ads_return_sensitivity_mean=0.30,   # Highest ad revenue — massive engagement, most seats
     ads_return_sensitivity_std=0.08,   # (0.5x noise)
+    # v3.4ab: Bain F500 0.2-0.7%/mo; multi-year contracts, very sticky
+    involuntary_churn_mean=0.005,
+    involuntary_churn_std=0.002,
 )
 
 # Initial customer groups (visible at Level 1 from start)
@@ -1890,6 +1928,7 @@ _INDIVIDUAL_GROUP_PARAMS = {
         lockin_penalty_mean=0.160, lockin_penalty_std=0.060,  # 20× from 0.008/0.003
         ads_quality_sensitivity_mean=0.08, ads_quality_sensitivity_std=0.03,
         ads_return_sensitivity_mean=0.10, ads_return_sensitivity_std=0.035,
+        involuntary_churn_mean=0.055, involuntary_churn_std=0.015,  # v3.4ab: B2C-prosumer creative
     ),
     # D_S02: Academic Researchers — need accuracy for scholarly work, grant-funded
     # [Oxford Academic: baseline for factual accuracy in academic contexts is high]
@@ -1905,6 +1944,7 @@ _INDIVIDUAL_GROUP_PARAMS = {
         lockin_penalty_mean=0.100, lockin_penalty_std=0.040,  # 20× from 0.005/0.002
         ads_quality_sensitivity_mean=0.18, ads_quality_sensitivity_std=0.065,
         ads_return_sensitivity_mean=0.06, ads_return_sensitivity_std=0.02,
+        involuntary_churn_mean=0.025, involuntary_churn_std=0.008,  # v3.4ab: grant-funded, stable
     ),
     # D_S03: Non-Profit Workers — extreme budget constraints, any functional free tool welcomed
     # [Chronicle of Philanthropy: <3% tech spend; Godefroid 2024: budget barriers]
@@ -1920,6 +1960,7 @@ _INDIVIDUAL_GROUP_PARAMS = {
         lockin_penalty_mean=0.180, lockin_penalty_std=0.060,  # 20× from 0.009/0.003
         ads_quality_sensitivity_mean=0.07, ads_quality_sensitivity_std=0.025,
         ads_return_sensitivity_mean=0.07, ads_return_sensitivity_std=0.025,
+            involuntary_churn_mean=0.04, involuntary_churn_std=0.012,  # v3.4ab: budget shocks, volunteer turnover
     ),
     # D_S04: Small Agency Teams — client-facing output needs baseline quality
     # [HubSpot 2025: agencies churn tools 2x faster; client expectations drive quality]
@@ -1934,6 +1975,7 @@ _INDIVIDUAL_GROUP_PARAMS = {
         lockin_penalty_mean=0.140, lockin_penalty_std=0.040,  # 20× from 0.007/0.002
         ads_quality_sensitivity_mean=0.16, ads_quality_sensitivity_std=0.055,
         ads_return_sensitivity_mean=0.08, ads_return_sensitivity_std=0.03,
+            involuntary_churn_mean=0.045, involuntary_churn_std=0.013,  # v3.4ab: HubSpot agencies churn 2× faster
     ),
     # D_S05: Indie Game Devs — tolerant adopters of free tools, high usage for code gen
     # [GDC 2025: 69% monthly subs; accept "good enough" for prototyping]
@@ -1948,6 +1990,7 @@ _INDIVIDUAL_GROUP_PARAMS = {
         lockin_penalty_mean=0.160, lockin_penalty_std=0.060,  # 20× from 0.008/0.003
         ads_quality_sensitivity_mean=0.06, ads_quality_sensitivity_std=0.02,
         ads_return_sensitivity_mean=0.14, ads_return_sensitivity_std=0.05,
+            involuntary_churn_mean=0.06, involuntary_churn_std=0.018,  # v3.4ab: GDC 6-8% project-based
     ),
     # D_S06: Freelance Writers — hypercritical of output quality (it's their craft)
     # [Contently 2025: 15%/month churn; fastest to notice quality regression]
@@ -1962,6 +2005,7 @@ _INDIVIDUAL_GROUP_PARAMS = {
         lockin_penalty_mean=0.180, lockin_penalty_std=0.060,  # 20× from 0.009/0.003
         ads_quality_sensitivity_mean=0.10, ads_quality_sensitivity_std=0.035,
         ads_return_sensitivity_mean=0.12, ads_return_sensitivity_std=0.04,
+            involuntary_churn_mean=0.07, involuntary_churn_std=0.02,  # v3.4ab: Contently 15%/mo total → ~7% baseline
     ),
     # D_S07: Data Analysts — employed professionals, need precision
     # [Kaggle 2024: 55% annual licenses; precision demands moderate-high floor]
@@ -1976,6 +2020,7 @@ _INDIVIDUAL_GROUP_PARAMS = {
         lockin_penalty_mean=0.100, lockin_penalty_std=0.040,  # 20× from 0.005/0.002
         ads_quality_sensitivity_mean=0.17, ads_quality_sensitivity_std=0.06,
         ads_return_sensitivity_mean=0.08, ads_return_sensitivity_std=0.03,
+            involuntary_churn_mean=0.025, involuntary_churn_std=0.007,  # v3.4ab: employed pros, sticky
     ),
     # D_S08: Social Media Managers — need "good enough to post" not perfect
     # [Sprout Social 2025: SM managers evaluate new tools every 6 months]
@@ -1990,6 +2035,7 @@ _INDIVIDUAL_GROUP_PARAMS = {
         lockin_penalty_mean=0.140, lockin_penalty_std=0.040,  # 20× from 0.007/0.002
         ads_quality_sensitivity_mean=0.09, ads_quality_sensitivity_std=0.03,
         ads_return_sensitivity_mean=0.15, ads_return_sensitivity_std=0.055,
+            involuntary_churn_mean=0.04, involuntary_churn_std=0.012,  # v3.4ab: Sprout 6-mo eval cycle
     ),
     # D_S09: UX Designers — extremely sensitive to bad quality (it IS their expertise)
     # [Nielsen Norman 2024: designers rate ad-containing tools 35% lower]
@@ -2004,6 +2050,7 @@ _INDIVIDUAL_GROUP_PARAMS = {
         lockin_penalty_mean=0.080, lockin_penalty_std=0.040,  # 20× from 0.004/0.002
         ads_quality_sensitivity_mean=0.22, ads_quality_sensitivity_std=0.075,
         ads_return_sensitivity_mean=0.05, ads_return_sensitivity_std=0.02,
+            involuntary_churn_mean=0.03, involuntary_churn_std=0.009,  # v3.4ab: pro tools, sticky workflows
     ),
     # D_S10: Music Producers — demanding audio quality standards, creative workflow
     # [MIDiA 2025: 65% prefer monthly; audio quality expectations very high]
@@ -2018,6 +2065,7 @@ _INDIVIDUAL_GROUP_PARAMS = {
         lockin_penalty_mean=0.160, lockin_penalty_std=0.060,  # 20× from 0.008/0.003
         ads_quality_sensitivity_mean=0.11, ads_quality_sensitivity_std=0.04,
         ads_return_sensitivity_mean=0.09, ads_return_sensitivity_std=0.03,
+            involuntary_churn_mean=0.05, involuntary_churn_std=0.015,  # v3.4ab: creative-cycle volatility
     ),
 }
 
@@ -2050,6 +2098,7 @@ _ENTERPRISE_GROUP_PARAMS = {
         lockin_penalty_mean=0.020, lockin_penalty_std=0.020,  # 20× from 0.001/0.001
         ads_quality_sensitivity_mean=0.30, ads_quality_sensitivity_std=0.105,
         ads_return_sensitivity_mean=0.15, ads_return_sensitivity_std=0.055,
+            involuntary_churn_mean=0.003, involuntary_churn_std=0.0015,  # v3.4ab: GSA 3-5yr contracts, super-sticky
     ),
     # D_E02: Educational Institutions — moderate quality needs, COPPA for student data
     # [EdTech Magazine 2025: 85% annual contracts; moderate regulatory burden]
@@ -2069,6 +2118,7 @@ _ENTERPRISE_GROUP_PARAMS = {
         lockin_penalty_mean=0.060, lockin_penalty_std=0.020,  # 20× from 0.003/0.001
         ads_quality_sensitivity_mean=0.12, ads_quality_sensitivity_std=0.04,
         ads_return_sensitivity_mean=0.18, ads_return_sensitivity_std=0.065,
+            involuntary_churn_mean=0.007, involuntary_churn_std=0.0025,  # v3.4ab: budget cycles, summer shocks
     ),
     # D_E03: Healthcare Networks — HIPAA non-negotiable; patient safety critical
     # [Drata: admin/physical/technical safeguards as baseline; errors = patient harm]
@@ -2088,6 +2138,7 @@ _ENTERPRISE_GROUP_PARAMS = {
         lockin_penalty_mean=0.040, lockin_penalty_std=0.020,  # 20× from 0.002/0.001
         ads_quality_sensitivity_mean=0.28, ads_quality_sensitivity_std=0.1,
         ads_return_sensitivity_mean=0.12, ads_return_sensitivity_std=0.04,
+            involuntary_churn_mean=0.004, involuntary_churn_std=0.0015,  # v3.4ab: KLAS 5-7yr contracts
     ),
     # D_E04: Regional Banks — Dodd-Frank, GLBA, SOX, PCI-DSS compliance
     # [Chargebee: "finance heavily regulated"; zero tolerance for quality issues]
@@ -2107,6 +2158,7 @@ _ENTERPRISE_GROUP_PARAMS = {
         lockin_penalty_mean=0.040, lockin_penalty_std=0.020,  # 20× from 0.002/0.001
         ads_quality_sensitivity_mean=0.27, ads_quality_sensitivity_std=0.095,
         ads_return_sensitivity_mean=0.18, ads_return_sensitivity_std=0.065,
+            involuntary_churn_mean=0.003, involuntary_churn_std=0.0015,  # v3.4ab: Cornerstone 7+yr core deals
     ),
     # D_E05: Insurance Brokers — claims accuracy; moderate regulatory
     # [Novarica 2025: insurance tech contracts 3-year terms; insurtech tools use sponsored recs]
@@ -2125,6 +2177,7 @@ _ENTERPRISE_GROUP_PARAMS = {
         lockin_penalty_mean=0.060, lockin_penalty_std=0.020,  # 20× from 0.003/0.001
         ads_quality_sensitivity_mean=0.18, ads_quality_sensitivity_std=0.065,
         ads_return_sensitivity_mean=0.22, ads_return_sensitivity_std=0.075,
+            involuntary_churn_mean=0.01, involuntary_churn_std=0.0035,  # v3.4ab: Novarica 3yr, more turnover
     ),
     # D_E06: Construction Firms — pragmatic adopters, moderate quality needs
     # [Dodge Construction 2025: 55% prefer annual SaaS; 40% accept ads for discounts]
@@ -2143,6 +2196,7 @@ _ENTERPRISE_GROUP_PARAMS = {
         lockin_penalty_mean=0.100, lockin_penalty_std=0.040,  # 20× from 0.005/0.002
         ads_quality_sensitivity_mean=0.10, ads_quality_sensitivity_std=0.035,
         ads_return_sensitivity_mean=0.20, ads_return_sensitivity_std=0.07,
+            involuntary_churn_mean=0.018, involuntary_churn_std=0.0055,  # v3.4ab: project-based, M&A volatility
     ),
     # D_E07: Telecom Operators — massive infrastructure, moderate regulatory
     # [TM Forum 2025: telecom vendor contracts avg 5+ years; BSS/OSS vendors ad-free]
@@ -2161,6 +2215,7 @@ _ENTERPRISE_GROUP_PARAMS = {
         lockin_penalty_mean=0.020, lockin_penalty_std=0.020,  # 20× from 0.001/0.001
         ads_quality_sensitivity_mean=0.25, ads_quality_sensitivity_std=0.09,
         ads_return_sensitivity_mean=0.28, ads_return_sensitivity_std=0.1,
+            involuntary_churn_mean=0.005, involuntary_churn_std=0.002,  # v3.4ab: TM Forum 5+yr contracts
     ),
     # D_E08: Energy Companies — regulatory/safety requirements significant
     # [Wood Mackenzie 2025: conservative adoption; safety-critical documentation]
@@ -2179,6 +2234,7 @@ _ENTERPRISE_GROUP_PARAMS = {
         lockin_penalty_mean=0.040, lockin_penalty_std=0.020,  # 20× from 0.002/0.001
         ads_quality_sensitivity_mean=0.20, ads_quality_sensitivity_std=0.07,
         ads_return_sensitivity_mean=0.25, ads_return_sensitivity_std=0.09,
+            involuntary_churn_mean=0.006, involuntary_churn_std=0.002,  # v3.4ab: conservative + budget swings
     ),
     # D_E09: Real Estate Groups — low regulatory burden, marketing-focused content
     # [PwC RE: AI expanding; listings need fact accuracy but creative embellishment OK]
@@ -2198,6 +2254,7 @@ _ENTERPRISE_GROUP_PARAMS = {
         lockin_penalty_mean=0.100, lockin_penalty_std=0.040,  # 20× from 0.005/0.002
         ads_quality_sensitivity_mean=0.08, ads_quality_sensitivity_std=0.03,
         ads_return_sensitivity_mean=0.22, ads_return_sensitivity_std=0.075,
+            involuntary_churn_mean=0.015, involuntary_churn_std=0.005,  # v3.4ab: lower regulatory, market-sensitive
     ),
     # D_E10: Shipping Lines — standardization critical but moderate quality bar
     # [Drewry Maritime 2025: shipping IT contracts avg 4+ years; systems strictly enterprise-grade]
@@ -2216,6 +2273,7 @@ _ENTERPRISE_GROUP_PARAMS = {
         lockin_penalty_mean=0.040, lockin_penalty_std=0.020,  # 20× from 0.002/0.001
         ads_quality_sensitivity_mean=0.22, ads_quality_sensitivity_std=0.075,
         ads_return_sensitivity_mean=0.20, ads_return_sensitivity_std=0.07,
+            involuntary_churn_mean=0.008, involuntary_churn_std=0.003,  # v3.4ab: Drewry 4yr+, volatile freight
     ),
 }
 
@@ -2257,6 +2315,8 @@ def generate_discoverable_groups(rng, n_individual: int = 10, n_enterprise: int 
             ads_quality_sensitivity_std=p['ads_quality_sensitivity_std'],
             ads_return_sensitivity_mean=p['ads_return_sensitivity_mean'],
             ads_return_sensitivity_std=p['ads_return_sensitivity_std'],
+            involuntary_churn_mean=p['involuntary_churn_mean'],
+            involuntary_churn_std=p['involuntary_churn_std'],
         )
 
     # Generate enterprise discoverable groups
@@ -2286,6 +2346,8 @@ def generate_discoverable_groups(rng, n_individual: int = 10, n_enterprise: int 
             ads_quality_sensitivity_std=p['ads_quality_sensitivity_std'],
             ads_return_sensitivity_mean=p['ads_return_sensitivity_mean'],
             ads_return_sensitivity_std=p['ads_return_sensitivity_std'],
+            involuntary_churn_mean=p['involuntary_churn_mean'],
+            involuntary_churn_std=p['involuntary_churn_std'],
         )
 
     # --- Populate persona/qualitative attribute dicts for discoverable groups ---

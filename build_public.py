@@ -40,6 +40,7 @@ SRC_DIR = PROJECT_ROOT / "src" / "saas_bench"
 # All simulator-engine modules (compiled into the zipapp as .pyc)
 _ENGINE_MODULES = [
     "__init__",
+    "_sql_chunk",
     "api_server",
     "config",
     "customer_llm",

@@ -252,6 +252,11 @@ class BashAgentToolExecutor:
         """Drop any env var that must never enter the bwrap sandbox."""
         return {k: v for k, v in env.items() if k not in cls._FORBIDDEN_SANDBOX_ENV}
 
+    # Path to the sitecustomize.py that installs an `import saas_bench`
+    # blocker inside the sandbox. Lives in this package so it ships with
+    # the editable install.
+    _SANDBOX_INIT_DIR = Path(__file__).parent / "_sandbox_init"
+
     def _build_bwrap_cmd(self, command: str, ws: str, env: Dict[str, str]) -> list:
         """Build a bwrap command that sandboxes bash to the workspace.
 
@@ -259,6 +264,8 @@ class BashAgentToolExecutor:
         - The agent workspace is the ONLY writable directory
         - System binaries, Python venv, and libraries are read-only
         - No access to source code, home directory, or other paths
+        - `import saas_bench` is blocked at the Python meta_path level via
+          a `sitecustomize.py` ro-bound at `/opt/_sandbox_init/`
         """
         import shutil
         bwrap = shutil.which('bwrap')
@@ -308,6 +315,19 @@ class BashAgentToolExecutor:
         for py_root in {sys.prefix, sys.base_prefix}:
             if py_root and os.path.isdir(py_root):
                 cmd.extend(['--ro-bind', py_root, py_root])
+
+        # Sandbox init dir — contains sitecustomize.py that blocks
+        # `import saas_bench` at the Python meta_path level. Mounted at a
+        # fixed path inside the sandbox and prepended to PYTHONPATH so
+        # site.py picks up sitecustomize on every interpreter start.
+        sandbox_init_host = self._SANDBOX_INIT_DIR
+        sandbox_init_guest = "/opt/_sandbox_init"
+        if sandbox_init_host.is_dir():
+            cmd.extend(['--ro-bind', str(sandbox_init_host), sandbox_init_guest])
+            existing_pp = env.get('PYTHONPATH', '')
+            env['PYTHONPATH'] = (
+                f"{sandbox_init_guest}:{existing_pp}" if existing_pp else sandbox_init_guest
+            )
 
         # The agent workspace — ONLY writable directory
         cmd.extend(['--bind', ws, ws])
@@ -364,11 +384,19 @@ class BashAgentToolExecutor:
         # zombie processes that can hold DB locks or resources.
         import signal
         if bwrap_cmd:
+            # CRITICAL: pass env=env so bwrap inherits a clean dict.
+            # Without this, bwrap inherits the launcher's full os.environ —
+            # including NMDB_KEY, which is the engine's DB encryption key.
+            # bwrap's `--setenv` only adds to the inherited env; it does not
+            # clear it. (Older bwrap builds don't have `--clearenv` either.)
+            # 2026-04-28: this leak is how the gpt55 v3.4aa run (1267c284)
+            # decrypted world.nmdb and ran UPDATE statements directly.
             proc = subprocess.Popen(
                 bwrap_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                env=env,
                 start_new_session=True,
             )
         else:

@@ -72,6 +72,9 @@ class _ForcedRng:
     def lognormal(self, mu, sigma):
         return self._boost  # bypass stochastic sampling
 
+    def uniform(self, lo, hi):
+        return 1.0  # neutral feedback multiplier; tests use no improvement so delta=0
+
     def integers(self, lo, hi):
         return lo  # unused here, but safe default
 

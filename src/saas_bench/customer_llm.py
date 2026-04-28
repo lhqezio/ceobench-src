@@ -555,6 +555,17 @@ Output ONLY the post text, nothing else."""
                 self.conn, state.current_plan, state.customer_id, self.config
             )
 
+        # Initial-negotiation perceived-quality noise (enterprise new_lead threads only).
+        # Sticky per customer_id so this customer sees the same noise multiplier across
+        # every turn of their initial negotiation. Renewal / renegotiation / plan_change /
+        # churn_prevention threads do NOT receive this noise. The simulator back-ref is
+        # set by Simulator.__init__; if absent (e.g. unit tests instantiating
+        # CustomerSimulator directly), the noise is simply skipped.
+        if state.thread_type == 'new_lead':
+            sim = getattr(self, 'simulator', None)
+            if sim is not None:
+                best_quality *= sim._get_customer_quality_noise(state.customer_id)
+
         # Compute chassis values
         max_accepting_price = compute_max_accepting_price(state, best_quality)
         customer_offer_price = compute_customer_offer_price(state, best_quality, self.config)

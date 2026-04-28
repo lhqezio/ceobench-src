@@ -71,6 +71,7 @@ from .database import (
     init_group_parameters, get_group_parameters, update_group_drift,
     get_all_group_parameters, get_global_drift, update_global_drift,
 )
+from ._sql_chunk import chunked_select, chunked_execute
 
 
 def sigmoid(x: float) -> float:
@@ -155,6 +156,8 @@ class Simulator:
         self.consecutive_negative_cash_days = 0
         self.shutdown_mode = False
         self.customer_simulator = customer_simulator  # For LLM-generated customer content
+        if customer_simulator is not None:
+            customer_simulator.simulator = self  # Back-ref for per-customer initial-decision quality noise
         self.event_logger = None  # Optional event logger for detailed logging
 
         # === Macroeconomic Cycle State ===
@@ -181,6 +184,22 @@ class Simulator:
         quality_seed = int(rng.integers(0, 2**63))
         self._quality_rng = Generator(PCG64(quality_seed ^ 0x5155414C))  # XOR with 'QUAL' constant
 
+        # Separate RNG for per-customer initial-decision perceived-quality noise.
+        # Applies a uniform[0.8, 1.1] multiplier to perceived_quality at:
+        #   (1) individual customer's initial subscription decision (anonymous draw, no key)
+        #   (2) enterprise customer's initial-negotiation evaluations (sticky per customer_id, same value across all turns)
+        # Does NOT apply to renewal / renegotiation / churn_prevention / plan_change / daily satisfaction.
+        # Stored in-memory only — never persisted to DB or exposed to the agent.
+        quality_noise_seed = int(rng.integers(0, 2**63))
+        self._customer_quality_noise_rng = Generator(PCG64(quality_noise_seed ^ 0x434E5351))  # XOR with 'CNSQ'
+        self._customer_quality_noise: Dict[int, float] = {}
+
+        # v3.4ab: Involuntary churn — base seed for deterministic per-(group, month) μ_t draw.
+        # The actual sub-RNG is derived stably from (init_seed, crc32(group_id), month) so customer
+        # visit order within a month does NOT affect the draw. Each (group, month) gets one μ_t.
+        self._involuntary_churn_seed = int(rng.integers(0, 2**63)) ^ 0x494E5643  # XOR with 'INVC'
+        self._involuntary_churn_mu_cache: Dict[Tuple[str, int], float] = {}
+
         # PMI follows Ornstein-Uhlenbeck process with sinusoidal mean
         self._macro_pmi_current = config.macro_pmi_initial
         # Randomize initial cycle phase so different seeds start at different points
@@ -202,6 +221,30 @@ class Simulator:
         self._macro_pmi_daily_history: list = []
         # Buffer for delayed PMI publication: list of dicts with measurement_day, publication_day, avg_pmi, etc.
         self._macro_pending_publications: list = []
+
+    def _get_customer_quality_noise(self, customer_id: int) -> float:
+        """Return sticky per-customer quality-noise multiplier for initial-decision evaluations.
+
+        Same value is returned for every call with the same `customer_id` — so an
+        enterprise customer sees consistent perceived quality across all turns of
+        their initial negotiation. Drawn from `_customer_quality_noise_rng` on first
+        access. In-memory only — not persisted, not visible to the agent.
+        """
+        noise = self._customer_quality_noise.get(customer_id)
+        if noise is None:
+            noise = float(self._customer_quality_noise_rng.uniform(0.8, 1.1))
+            self._customer_quality_noise[customer_id] = noise
+        return noise
+
+    def _draw_anonymous_quality_noise(self) -> float:
+        """Draw a fresh uniform[0.8, 1.1] from the quality-noise RNG without keying.
+
+        Used for individual customers at the moment of their initial subscription
+        decision, where the customer hasn't been inserted into the DB yet so no
+        `customer_id` exists. The noise is applied in-place to the local `quality`
+        variable for the accept/lost decision and never persisted.
+        """
+        return float(self._customer_quality_noise_rng.uniform(0.8, 1.1))
 
     # === L3-L5 Performance: Per-step_day cached state ===
     # These are populated once at the start of step_day and reused by all functions
@@ -682,6 +725,7 @@ class Simulator:
             '_macro_rng': _serialize_state(self._macro_rng),
             '_competitor_rng': _serialize_state(self._competitor_rng),
             '_quality_rng': _serialize_state(self._quality_rng),
+            '_customer_quality_noise_rng': _serialize_state(self._customer_quality_noise_rng),
         }
 
         # Save per-group RNGs
@@ -701,6 +745,9 @@ class Simulator:
             '_macro_multipliers': {k: dict(v) for k, v in self._macro_multipliers.items()} if self._macro_multipliers else {},
             '_macro_pmi_daily_history': list(self._macro_pmi_daily_history),
             '_macro_pending_publications': list(self._macro_pending_publications),
+            # Sticky per-customer noise dict — keys are customer_ids, values are uniform[0.8,1.1] draws.
+            # JSON requires string keys, so we re-cast on restore.
+            '_customer_quality_noise': {str(k): v for k, v in self._customer_quality_noise.items()},
         }
 
         self.conn.execute(
@@ -749,6 +796,8 @@ class Simulator:
         _restore_state(self._macro_rng, states['_macro_rng'])
         _restore_state(self._competitor_rng, states['_competitor_rng'])
         _restore_state(self._quality_rng, states['_quality_rng'])
+        if '_customer_quality_noise_rng' in states:
+            _restore_state(self._customer_quality_noise_rng, states['_customer_quality_noise_rng'])
 
         # Restore per-group RNGs
         if '_group_rngs' in states:
@@ -770,6 +819,8 @@ class Simulator:
             self._macro_multipliers = ss.get('_macro_multipliers', {})
             self._macro_pmi_daily_history = ss.get('_macro_pmi_daily_history', [])
             self._macro_pending_publications = ss.get('_macro_pending_publications', [])
+            saved_noise = ss.get('_customer_quality_noise', {})
+            self._customer_quality_noise = {int(k): float(v) for k, v in saved_noise.items()}
 
         return True
 
@@ -1516,6 +1567,40 @@ class Simulator:
 
         return a * satisfaction - b * (price / W)
 
+    def _get_involuntary_churn_mu(self, group_id: str) -> float:
+        """v3.4ab: Per-month involuntary-churn probability μ_t for a group.
+
+        Drawn once per (group, month) from Normal(group.involuntary_churn_mean,
+        group.involuntary_churn_std), clipped to [0, 1]. Seeded stably from
+        (init_seed, group_id, month) so the draw is independent of customer
+        visit order within the month.
+        """
+        if not getattr(self.config, 'enable_involuntary_churn', True):
+            return 0.0
+        group = CUSTOMER_GROUPS.get(group_id)
+        if group is None:
+            return 0.0
+        mean = float(getattr(group, 'involuntary_churn_mean', 0.0) or 0.0)
+        std = float(getattr(group, 'involuntary_churn_std', 0.0) or 0.0)
+        if mean <= 0.0 and std <= 0.0:
+            return 0.0
+        month = self.current_day // 30
+        key = (group_id, month)
+        cached = self._involuntary_churn_mu_cache.get(key)
+        if cached is not None:
+            return cached
+        import zlib
+        gid_hash = zlib.crc32(group_id.encode('utf-8'))
+        sub_seed = (self._involuntary_churn_seed ^ (gid_hash * 0x9E3779B1) ^ (month * 0xA24BAED1)) & ((1 << 63) - 1)
+        sub_rng = Generator(PCG64(sub_seed))
+        mu_t = float(sub_rng.normal(mean, std))
+        if mu_t < 0.0:
+            mu_t = 0.0
+        elif mu_t > 1.0:
+            mu_t = 1.0
+        self._involuntary_churn_mu_cache[key] = mu_t
+        return mu_t
+
     def _process_billing_decisions(self, config: dict, overload: float, outage: bool) -> Tuple[int, int, int, int, list]:
         """Process plan switching and cancellation at billing period using participation curve.
 
@@ -1560,6 +1645,27 @@ class Simulator:
             customer_id = sub['customer_id']
             current_plan = sub['plan']
             current_price = sub['listed_price']
+            group_id = sub['group_id']
+
+            # v3.4ab: Involuntary-churn roll — real-world floor (billing failures, life changes,
+            # M&A, budget cuts, etc.). Fires per renewal event, BEFORE participation-curve check.
+            # Does NOT damage reputation and does NOT generate social posts.
+            mu_t = self._get_involuntary_churn_mu(group_id)
+            if mu_t > 0.0 and self.rng.random() < mu_t:
+                self.conn.execute("""
+                    UPDATE subscriptions SET status = 'cancelled', end_day = ?, churn_reason = ?
+                    WHERE subscription_id = ?
+                """, (self.current_day, ChurnReason.INVOLUNTARY.value, sub['subscription_id']))
+                cancellations += 1
+                if self.event_logger:
+                    self.event_logger.log_customer_churn(
+                        customer_id=customer_id,
+                        group_id=group_id,
+                        plan=current_plan,
+                        reason='involuntary',
+                        satisfaction=sub['satisfaction'] or 0.0,
+                    )
+                continue
 
             # Get asymmetric sigmoid curve parameters (use drifted values + drift offsets)
             steepness_left = sub['current_steepness_left'] or sub['steepness_left']
@@ -1896,6 +2002,13 @@ class Simulator:
                     quota_penalty = self.config.quota_dissatisfaction_scale * (1.0 - fulfillment_ratio)
 
                 quality = base_quality - quota_penalty
+
+                # Initial-decision perceived-quality noise (individual customers only).
+                # Enterprise customers receive their noise during negotiation evaluations,
+                # not here, because their qualification gate below uses raw quality and
+                # they are inserted as DB rows before negotiation begins.
+                if not _is_enterprise:
+                    quality *= self._draw_anonymous_quality_noise()
 
                 is_acceptable = self._plan_acceptable(
                     steepness_left, steepness_right, c_max,
@@ -2821,16 +2934,15 @@ class Simulator:
 
             # L4: Batch-fetch oldest open issue per resolved customer, then batch-resolve
             if resolved_customer_ids_list:
-                placeholders = ','.join('?' * len(resolved_customer_ids_list))
-                oldest_issues = self.conn.execute(f"""
+                oldest_issues = chunked_select(self.conn, """
                     SELECT i.issue_id, i.customer_id FROM issues i
                     INNER JOIN (
                         SELECT customer_id, MIN(open_day) as min_day
-                        FROM issues WHERE customer_id IN ({placeholders}) AND status = 'open'
+                        FROM issues WHERE customer_id IN ({ph}) AND status = 'open'
                         GROUP BY customer_id
                     ) m ON i.customer_id = m.customer_id AND i.open_day = m.min_day
                     WHERE i.status = 'open'
-                """, resolved_customer_ids_list).fetchall()
+                """, resolved_customer_ids_list)
 
                 if oldest_issues:
                     resolve_batch = [(self.current_day, 'ops_resolved', row['issue_id']) for row in oldest_issues]
@@ -3528,8 +3640,7 @@ class Simulator:
         unique_cids = list({cand['customer_id'] for cand in regular_work})
         prefetched_personas = {}
         if unique_cids:
-            placeholders = ','.join('?' * len(unique_cids))
-            persona_rows = self.conn.execute(f"""
+            persona_rows = chunked_select(self.conn, """
                 SELECT customer_id, group_id, customer_type,
                        persona_industry, persona_role, persona_experience,
                        persona_work_style, persona_tech_savvy, persona_communication,
@@ -3537,8 +3648,8 @@ class Simulator:
                        company_primary_concern, persona_description,
                        seat_count, email
                 FROM customers
-                WHERE customer_id IN ({placeholders}) AND persona_description IS NOT NULL
-            """, unique_cids).fetchall()
+                WHERE customer_id IN ({ph}) AND persona_description IS NOT NULL
+            """, unique_cids)
             from .database import _get_writing_style_from_persona
             for row in persona_rows:
                 persona = dict(row)
@@ -3698,8 +3809,7 @@ class Simulator:
         unique_cids = list({cand['customer_id'] for cand in regular_work})
         prefetched_personas = {}
         if unique_cids:
-            placeholders = ','.join('?' * len(unique_cids))
-            persona_rows = self.conn.execute(f"""
+            persona_rows = chunked_select(self.conn, """
                 SELECT customer_id, group_id, customer_type,
                        persona_industry, persona_role, persona_experience,
                        persona_work_style, persona_tech_savvy, persona_communication,
@@ -3707,8 +3817,8 @@ class Simulator:
                        company_primary_concern, persona_description,
                        seat_count, email
                 FROM customers
-                WHERE customer_id IN ({placeholders}) AND persona_description IS NOT NULL
-            """, unique_cids).fetchall()
+                WHERE customer_id IN ({ph}) AND persona_description IS NOT NULL
+            """, unique_cids)
             from .database import _get_writing_style_from_persona
             for row in persona_rows:
                 persona = dict(row)
@@ -4870,6 +4980,29 @@ Requirements:
         magnitude_scale = scale_min + (scale_max - scale_min) * day_frac
         boost = base_boost * magnitude_scale
 
+        # Reactive-feedback term: competitors react to YOUR product improvements
+        # since the last competitor event. Improvement = global dev quality bonus
+        # (q_shared) + cumulative completed-R&D quality boost. Multiplier is
+        # uniform on [0.8, 1.05]. The final event boost is the MAX of the
+        # randomly-sampled boost and (u × Δ) — so a big improvement guarantees
+        # at least a proportional competitor response, but a naturally large
+        # sampled shock still dominates if it's bigger. Persists across
+        # stop/resume via the global_state KV table.
+        q_shared_now = get_global_state(self.conn, 'q_shared_bonus', 0.0)
+        rd_now_row = self.conn.execute(
+            "SELECT COALESCE(SUM(quality_boost_applied), 0.0) FROM research_projects WHERE status = 'completed'"
+        ).fetchone()
+        rd_now = float(rd_now_row[0]) if rd_now_row else 0.0
+        last_q_shared = get_global_state(self.conn, 'competitor_event_last_q_shared', 0.0)
+        last_rd = get_global_state(self.conn, 'competitor_event_last_rd_boost', 0.0)
+        delta_improvement = max(0.0, (q_shared_now + rd_now) - (last_q_shared + last_rd))
+        feedback_u = float(self._competitor_rng.uniform(0.8, 1.05))
+        feedback_term = feedback_u * delta_improvement
+        boost = max(boost, feedback_term)
+        # Update markers so the next event measures improvement since *this* event
+        set_global_state(self.conn, 'competitor_event_last_q_shared', q_shared_now)
+        set_global_state(self.conn, 'competitor_event_last_rd_boost', rd_now)
+
         post_end_day = self.current_day + self.config.competitor_event_post_days
 
         # Generate a description based on severity
@@ -5240,33 +5373,32 @@ Guidelines:
         all_customer_ids = [t['customer_id'] for t in timed_out_threads]
         # Deduplicate for the batch queries
         unique_cids = list(set(all_customer_ids))
-        ph = ','.join('?' * len(unique_cids))
 
         # 1) Batch-fetch subscription info for all customers
-        sub_rows = self.conn.execute(f"""
+        sub_rows = chunked_select(self.conn, """
             SELECT customer_id, plan, listed_price, contract_end_day, start_day
             FROM subscriptions
             WHERE customer_id IN ({ph}) AND status = 'subscribed' AND end_day IS NULL
-        """, unique_cids).fetchall()
+        """, unique_cids)
         sub_map = {row['customer_id']: row for row in sub_rows}
 
         # 2) Batch-fetch customer info (seat_count, group_id, c_max)
-        cust_rows = self.conn.execute(f"""
+        cust_rows = chunked_select(self.conn, """
             SELECT c.customer_id, c.seat_count, c.group_id, c.c_max,
                    cs.current_c_max, cs.shock_event_id
             FROM customers c
             LEFT JOIN customer_state cs ON c.customer_id = cs.customer_id
             WHERE c.customer_id IN ({ph})
-        """, unique_cids).fetchall()
+        """, unique_cids)
         cust_map = {row['customer_id']: row for row in cust_rows}
 
         # 3) Batch-fetch open issue counts (for _detect_churn_reason)
-        issue_rows = self.conn.execute(f"""
+        issue_rows = chunked_select(self.conn, """
             SELECT customer_id, COUNT(*) as cnt
             FROM issues
             WHERE customer_id IN ({ph}) AND status = 'open' AND days_open >= 14
             GROUP BY customer_id
-        """, unique_cids).fetchall()
+        """, unique_cids)
         issue_map = {row['customer_id']: row['cnt'] for row in issue_rows}
 
         # 4) Batch-fetch group reputations
@@ -5369,13 +5501,13 @@ Guidelines:
             """, cancel_updates)
 
         if dead_thread_ids:
-            # Batch mark threads dead — single UPDATE with IN clause
-            ph_dead = ','.join('?' * len(dead_thread_ids))
-            self.conn.execute(f"""
+            # Batch mark threads dead — chunked UPDATE so we don't blow past
+            # SQLITE_MAX_VARIABLE_NUMBER when many threads time out at once.
+            chunked_execute(self.conn, """
                 UPDATE enterprise_turns SET _internal_status = 'timeout'
                 WHERE message_id IN (
                     SELECT MAX(message_id) FROM enterprise_turns
-                    WHERE thread_id IN ({ph_dead})
+                    WHERE thread_id IN ({ph})
                     GROUP BY thread_id
                 )
             """, dead_thread_ids)
@@ -5422,18 +5554,19 @@ Guidelines:
         customer_ids = [s.customer_id for s in states_map.values()]
         qualities_map = get_qualities_for_all_plans_batch(self.conn, customer_ids, self.config)
 
-        # Batch-fetch last agent turns for all threads (1 query instead of N)
-        placeholders = ','.join('?' * len(thread_ids))
-        agent_turn_rows = self.conn.execute(f"""
+        # Batch-fetch last agent turns for all threads (1 query per chunk).
+        # Chunked so we don't trip SQLITE_MAX_VARIABLE_NUMBER when many threads
+        # are due to reply on the same day.
+        agent_turn_rows = chunked_select(self.conn, """
             SELECT et.thread_id, et.message_text, et.offer_json
             FROM enterprise_turns et
             INNER JOIN (
                 SELECT thread_id, MAX(message_id) AS max_mid
                 FROM enterprise_turns
-                WHERE thread_id IN ({placeholders}) AND sender = 'agent'
+                WHERE thread_id IN ({ph}) AND sender = 'agent'
                 GROUP BY thread_id
             ) latest ON et.thread_id = latest.thread_id AND et.message_id = latest.max_mid
-        """, thread_ids).fetchall()
+        """, thread_ids)
         agent_turns_map = {row['thread_id']: row for row in agent_turn_rows}
 
         for thread_id in thread_ids:
@@ -5442,6 +5575,14 @@ Guidelines:
                 continue
 
             qualities = qualities_map.get(state.customer_id, {'A': 0.5, 'B': 0.5, 'C': 0.5})
+
+            # Initial-negotiation perceived-quality noise (enterprise only).
+            # Sticky per customer_id so the same noise multiplier applies across every
+            # turn of this customer's initial negotiation. Renewals / renegotiations /
+            # plan changes / churn prevention threads do NOT receive this noise.
+            if state.thread_type == 'new_lead':
+                noise = self._get_customer_quality_noise(state.customer_id)
+                qualities = {plan: q * noise for plan, q in qualities.items()}
 
             last_agent_turn = agent_turns_map.get(thread_id)
 
@@ -6122,6 +6263,22 @@ Guidelines:
                 """, (customer_id,)).fetchone()
                 if active_thread:
                     continue  # Already has an active negotiation
+
+            # v3.4ab: Involuntary-churn roll at renewal trigger (real-world floor: M&A, budget cuts,
+            # procurement freezes). Fires once per renewal cycle (only on first day with no active
+            # thread yet). Cancels directly without renewal negotiation. No reputation damage.
+            mu_t = self._get_involuntary_churn_mu(ent['group_id'])
+            if mu_t > 0.0 and self.rng.random() < mu_t:
+                self.conn.execute("""
+                    UPDATE subscriptions
+                    SET status = 'cancelled', end_day = ?, churn_reason = ?
+                    WHERE customer_id = ? AND status = 'subscribed' AND end_day IS NULL
+                """, (self.current_day, ChurnReason.INVOLUNTARY.value, customer_id))
+                add_notification(
+                    self.conn, self.current_day, 'customer_churned',
+                    f'Enterprise customer churned (involuntary)'
+                )
+                continue
 
             # Create renewal thread
             thread_id, _message_id = create_negotiation_thread(

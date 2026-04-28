@@ -34,6 +34,7 @@ from .enterprise import (
     update_relationship,
     create_negotiation_thread, add_customer_message, generate_enterprise_email,
 )
+from ._sql_chunk import chunked_select, chunked_execute
 
 
 # =====================================================================
@@ -2811,23 +2812,22 @@ class AgentTools:
                 return ToolResult(False, summaries[0], {'results': results})
             return ToolResult(False, f"Sent 0/{len(deals)} enterprise deals ({failed} failed):\n" + "\n".join(summaries), {'results': results})
 
-        # --- Phase 2: Batch pre-fetch active threads for all customer_ids (1 query) ---
+        # --- Phase 2: Batch pre-fetch active threads for all customer_ids (chunked) ---
         all_cids = [cid for cid, _ in parsed_deals]
-        cid_placeholders = ','.join('?' * len(all_cids))
         active_threads = {}  # customer_id -> {thread_id, thread_type, prev_turn_number, prev_customer_id, prev_thread_type, prev_current_offer_price, last_customer_day}
         if all_cids:
-            rows = self.conn.execute(f"""
+            rows = chunked_select(self.conn, """
                 SELECT et.customer_id, et.thread_id, et.thread_type,
                        et.turn_number, et.current_offer_price,
                        et.sender, et.next_reply_day
                 FROM enterprise_turns et
-                WHERE et.customer_id IN ({cid_placeholders})
+                WHERE et.customer_id IN ({ph})
                   AND et.message_id = (
                       SELECT MAX(et2.message_id) FROM enterprise_turns et2 WHERE et2.thread_id = et.thread_id
                   )
                   AND et.closed = 0
                   AND et._internal_status IS NULL
-            """, all_cids).fetchall()
+            """, all_cids)
             for row in rows:
                 active_threads[row['customer_id']] = {
                     'thread_id': row['thread_id'],
@@ -2842,12 +2842,11 @@ class AgentTools:
         thread_ids_with_active = [v['thread_id'] for v in active_threads.values()]
         last_customer_days = {}  # thread_id -> max_day
         if thread_ids_with_active:
-            tid_placeholders = ','.join('?' * len(thread_ids_with_active))
-            rows = self.conn.execute(f"""
+            rows = chunked_select(self.conn, """
                 SELECT thread_id, MAX(day) as max_day FROM enterprise_turns
-                WHERE thread_id IN ({tid_placeholders}) AND sender = 'customer'
+                WHERE thread_id IN ({ph}) AND sender = 'customer'
                 GROUP BY thread_id
-            """, thread_ids_with_active).fetchall()
+            """, thread_ids_with_active)
             for row in rows:
                 last_customer_days[row['thread_id']] = row['max_day']
 
@@ -2855,15 +2854,14 @@ class AgentTools:
         cids_no_thread = [cid for cid, _ in parsed_deals if cid not in active_threads]
         customer_info = {}  # customer_id -> row
         if cids_no_thread:
-            cid_nt_placeholders = ','.join('?' * len(cids_no_thread))
-            rows = self.conn.execute(f"""
+            rows = chunked_select(self.conn, """
                 SELECT c.customer_id, c.customer_type, c.seat_count, c.email,
                        s.plan, s.listed_price, s.promotion, s.effective_price, s.status, s.contract_months, s.contract_end_day
                 FROM customers c
                 LEFT JOIN subscriptions s ON c.customer_id = s.customer_id
                     AND s.status = 'subscribed' AND s.end_day IS NULL
-                WHERE c.customer_id IN ({cid_nt_placeholders})
-            """, cids_no_thread).fetchall()
+                WHERE c.customer_id IN ({ph})
+            """, cids_no_thread)
             for row in rows:
                 customer_info[row['customer_id']] = row
 
@@ -3958,11 +3956,11 @@ os.chdir('{self.workspace_path}')
                 agent_post_ids.add(apid)
         agent_post_content = {}
         if agent_post_ids:
-            placeholders = ','.join('?' * len(agent_post_ids))
-            rows = self.conn.execute(
-                f"SELECT agent_post_id, content FROM agent_social_media_posts WHERE agent_post_id IN ({placeholders})",
-                list(agent_post_ids)
-            ).fetchall()
+            rows = chunked_select(
+                self.conn,
+                "SELECT agent_post_id, content FROM agent_social_media_posts WHERE agent_post_id IN ({ph})",
+                list(agent_post_ids),
+            )
             agent_post_content = {r['agent_post_id']: r['content'] for r in rows}
 
         # Format for display - show post content only (engagement metrics hidden)
@@ -4098,20 +4096,19 @@ os.chdir('{self.workspace_path}')
                 return ToolResult(False, summaries[0], {'results': results})
             return ToolResult(False, f"Rejected 0/{len(deals)} enterprise deals:\n" + "\n".join(summaries), {'results': results})
 
-        # --- Phase 2: Batch pre-fetch active threads (1 query) ---
-        cid_placeholders = ','.join('?' * len(parsed_cids))
+        # --- Phase 2: Batch pre-fetch active threads (chunked) ---
         active_threads = {}  # customer_id -> {thread_id, thread_type, turn_number, current_offer_price, closed}
-        rows = self.conn.execute(f"""
+        rows = chunked_select(self.conn, """
             SELECT et.customer_id, et.thread_id, et.thread_type,
                    et.turn_number, et.current_offer_price, et.closed, et.close_reason
             FROM enterprise_turns et
-            WHERE et.customer_id IN ({cid_placeholders})
+            WHERE et.customer_id IN ({ph})
               AND et.message_id = (
                   SELECT MAX(et2.message_id) FROM enterprise_turns et2 WHERE et2.thread_id = et.thread_id
               )
               AND et.closed = 0
               AND et._internal_status IS NULL
-        """, parsed_cids).fetchall()
+        """, parsed_cids)
         for row in rows:
             active_threads[row['customer_id']] = {
                 'thread_id': row['thread_id'],

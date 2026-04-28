@@ -20,6 +20,7 @@ from typing import Optional, Dict, List, Tuple
 from numpy.random import Generator
 
 from .config import BenchmarkConfig, MODEL_TIERS, CUSTOMER_GROUPS
+from ._sql_chunk import chunked_select, chunked_execute
 
 
 # First names and last names for generating realistic email addresses
@@ -253,8 +254,10 @@ def get_negotiation_states_batch(conn: sqlite3.Connection, thread_ids: List[int]
     if not thread_ids:
         return {}
 
-    placeholders = ','.join('?' * len(thread_ids))
-    rows = conn.execute(f"""
+    # Outer `WHERE et.thread_id IN (...)` was redundant with the INNER JOIN
+    # (the join already constrains et.thread_id to the given list); dropped
+    # so the IN clause appears once and chunked_select can split safely.
+    rows = chunked_select(conn, """
         SELECT et.thread_id, et.customer_id, et.thread_type,
                et.closed, et.close_reason,
                et.turn_number, et.current_offer_price, et.next_reply_day,
@@ -271,15 +274,14 @@ def get_negotiation_states_batch(conn: sqlite3.Connection, thread_ids: List[int]
         INNER JOIN (
             SELECT thread_id, MAX(message_id) AS max_mid
             FROM enterprise_turns
-            WHERE thread_id IN ({placeholders})
+            WHERE thread_id IN ({ph})
             GROUP BY thread_id
         ) latest ON et.thread_id = latest.thread_id AND et.message_id = latest.max_mid
         JOIN customers c ON et.customer_id = c.customer_id
         LEFT JOIN customer_state cs ON c.customer_id = cs.customer_id
         LEFT JOIN subscriptions s ON c.customer_id = s.customer_id
             AND s.status = 'subscribed' AND s.end_day IS NULL
-        WHERE et.thread_id IN ({placeholders})
-    """, thread_ids + thread_ids).fetchall()
+    """, thread_ids)
 
     # Pre-fetch drift offsets once (same for all threads in this batch)
     # global_q_bias is shared; group offsets vary per customer group
@@ -707,20 +709,20 @@ def batch_schedule_customer_replies(
     if not thread_ids:
         return
 
-    # Batch fetch negotiation states for all threads (1 query)
-    placeholders = ','.join('?' * len(thread_ids))
-    rows = conn.execute(f"""
+    # Batch fetch negotiation states for all threads (chunked to stay below
+    # SQLITE_MAX_VARIABLE_NUMBER once thread counts grow).
+    rows = chunked_select(conn, """
         SELECT et.thread_id, et.customer_id, et.thread_type,
                et.closed, et.close_reason,
                et.turn_number, et.current_offer_price, et.next_reply_day,
                c.reply_delay_mean, c.reply_delay_std, c.max_negotiation_turns
         FROM enterprise_turns et
         JOIN customers c ON et.customer_id = c.customer_id
-        WHERE et.thread_id IN ({placeholders})
+        WHERE et.thread_id IN ({ph})
           AND et.message_id = (
               SELECT MAX(et2.message_id) FROM enterprise_turns et2 WHERE et2.thread_id = et.thread_id
           )
-    """, thread_ids).fetchall()
+    """, thread_ids)
 
     thread_data = {row['thread_id']: row for row in rows}
 
@@ -998,8 +1000,7 @@ def get_qualities_for_all_plans_batch(
     current_day = int(float(day_row['value'])) if day_row else 0
 
     # Batch-fetch customer data (relationship, open_issue_days, subscription start_day, etc.)
-    placeholders = ','.join('?' * len(customer_ids))
-    rows = conn.execute(f"""
+    rows = chunked_select(conn, """
         SELECT cs.customer_id, cs.relationship, cs.open_issue_days,
                c.usage_demand, c.seat_count, c.ads_quality_sensitivity, c.group_id,
                s.start_day, s.daily_usage_rate
@@ -1007,8 +1008,8 @@ def get_qualities_for_all_plans_batch(
         JOIN customers c ON cs.customer_id = c.customer_id
         LEFT JOIN subscriptions s ON c.customer_id = s.customer_id
             AND s.status = 'subscribed' AND s.end_day IS NULL
-        WHERE cs.customer_id IN ({placeholders})
-    """, customer_ids).fetchall()
+        WHERE cs.customer_id IN ({ph})
+    """, customer_ids)
 
     customer_data = {row['customer_id']: row for row in rows}
     rel_bonus_max = config.relationship_quality_bonus_max

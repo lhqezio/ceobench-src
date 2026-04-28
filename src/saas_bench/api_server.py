@@ -7,7 +7,11 @@ is via HTTP on localhost with a random OS-assigned port.
 
 import json
 import re
+import sqlite3
+import sys
 import threading
+import traceback
+import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional, Set
 
@@ -285,38 +289,84 @@ class _APIHandler(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
-        if self.path == '/call':
-            self._handle_call()
-        elif self.path == '/next-week':
-            self._handle_next_week()
-        elif self.path == '/query':
-            self._handle_query()
-        elif self.path == '/daily-scripts':
-            self._handle_daily_scripts_post()
-        elif self.path == '/reinitialize':
-            self._handle_reinitialize()
-        else:
-            self._send_json({"error": f"Unknown endpoint: {self.path}"}, 404)
+        try:
+            if self.path == '/call':
+                self._handle_call()
+            elif self.path == '/next-week':
+                self._handle_next_week()
+            elif self.path == '/query':
+                self._handle_query()
+            elif self.path == '/daily-scripts':
+                self._handle_daily_scripts_post()
+            elif self.path == '/reinitialize':
+                self._handle_reinitialize()
+            else:
+                self._send_json({"error": f"Unknown endpoint: {self.path}"}, 404)
+        except Exception as exc:
+            self._send_internal_error(exc, op=f"POST {self.path}")
 
     def do_GET(self):
-        if self.path == '/vars':
-            self._handle_vars()
-        elif self.path == '/health':
-            self._send_json({"status": "ok"})
-        elif self.path == '/daily-scripts':
-            self._handle_daily_scripts_get()
-        elif self.path == '/dashboard':
-            self._handle_dashboard_get()
-        elif self.path == '/game-status':
-            self._handle_game_status()
-        else:
-            self._send_json({"error": f"Unknown endpoint: {self.path}"}, 404)
+        try:
+            if self.path == '/vars':
+                self._handle_vars()
+            elif self.path == '/health':
+                self._send_json({"status": "ok"})
+            elif self.path == '/daily-scripts':
+                self._handle_daily_scripts_get()
+            elif self.path == '/dashboard':
+                self._handle_dashboard_get()
+            elif self.path == '/game-status':
+                self._handle_game_status()
+            else:
+                self._send_json({"error": f"Unknown endpoint: {self.path}"}, 404)
+        except Exception as exc:
+            self._send_internal_error(exc, op=f"GET {self.path}")
 
     def do_DELETE(self):
-        if self.path == '/daily-scripts':
-            self._handle_daily_scripts_delete()
-        else:
-            self._send_json({"error": f"Unknown endpoint: {self.path}"}, 404)
+        try:
+            if self.path == '/daily-scripts':
+                self._handle_daily_scripts_delete()
+            else:
+                self._send_json({"error": f"Unknown endpoint: {self.path}"}, 404)
+        except Exception as exc:
+            self._send_internal_error(exc, op=f"DELETE {self.path}")
+
+    def _send_internal_error(self, exc: BaseException, *, op: str, status: int = 500) -> None:
+        """Centralized 5xx response.
+
+        The full traceback is written to the server log (stderr) so operators
+        can debug, but the agent only ever sees a stable
+        ``{"error": "internal_error", "request_id": ...}`` payload — no
+        exception type, no message, no traceback, no source paths. This is
+        the choke point that prevents engine internals from leaking into
+        the agent's tool-result stream the way they did before.
+        """
+        request_id = uuid.uuid4().hex[:12]
+        try:
+            tb = traceback.format_exc()
+        except Exception:
+            tb = "<traceback unavailable>"
+        try:
+            print(
+                f"[api_server] internal_error op={op} request_id={request_id}\n{tb}",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:
+            pass
+        try:
+            self._send_json(
+                {
+                    "success": False,
+                    "error": "internal_error",
+                    "request_id": request_id,
+                    "data": None,
+                },
+                status,
+            )
+        except Exception:
+            # Connection may already be torn down; nothing useful to do.
+            pass
 
     def _read_body(self) -> Dict:
         length = int(self.headers.get('Content-Length', 0))
@@ -347,15 +397,13 @@ class _APIHandler(BaseHTTPRequestHandler):
                 # Fallback for non-ToolResult returns
                 self._send_json({"success": True, "data": {"output": str(result)}, "message": str(result)})
         except Exception as e:
-            self._send_json({"success": False, "error": str(e), "data": None}, 500)
+            self._send_internal_error(e, op="call")
 
     def _handle_reinitialize(self):
         """Handle reinitialize request: POST /reinitialize."""
         try:
             server: NovaMindAPIServer = self.server._api_server
             # Force reload of the simulation module
-            import importlib
-            import sys
             if 'saas_bench.simulation' in sys.modules:
                 # Delete cached module to force reload
                 del sys.modules['saas_bench.simulation']
@@ -363,8 +411,7 @@ class _APIHandler(BaseHTTPRequestHandler):
             server.simulator.initialize()
             self._send_json({"success": True, "message": "Simulator reinitialized"})
         except Exception as e:
-            import traceback
-            self._send_json({"success": False, "error": str(e), "traceback": traceback.format_exc()}, 500)
+            self._send_internal_error(e, op="reinitialize")
 
     def _handle_next_week(self):
         """Handle next-week advancement: POST /next-week.
@@ -438,9 +485,7 @@ class _APIHandler(BaseHTTPRequestHandler):
             result = server.advance_week(predictions=parsed)
             self._send_json(result)
         except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            self._send_json({"success": False, "error": f"{e}\n{tb}", "data": None}, 500)
+            self._send_internal_error(e, op="next-week")
 
     def _handle_query(self):
         """Handle SQL queries: POST /query {"sql": "SELECT ..."}
@@ -525,8 +570,14 @@ class _APIHandler(BaseHTTPRequestHandler):
 
             self._send_json(response)
 
-        except Exception as e:
+        except sqlite3.Error as e:
+            # SQL errors are deliberately surfaced to the agent (the helper
+            # rewrites them into typed hints — no source paths or tracebacks).
             self._send_json({"success": False, "error": _get_helpful_query_error(e, sql)}, 500)
+        except Exception as e:
+            # Anything non-SQL (e.g. a programming error in the handler) must
+            # NOT leak details — route through the centralized scrubber.
+            self._send_internal_error(e, op="query")
 
     def _handle_daily_scripts_post(self):
         """Register a daily script snapshot: POST /daily-scripts {"name": "x.py", "content": "..."}."""
@@ -542,7 +593,7 @@ class _APIHandler(BaseHTTPRequestHandler):
                 server._daily_scripts[name] = content
             self._send_json({"success": True, "data": {"name": name, "registered": True}})
         except Exception as e:
-            self._send_json({"success": False, "error": str(e)}, 500)
+            self._send_internal_error(e, op="daily-scripts:post")
 
     def _handle_daily_scripts_get(self):
         """List registered daily scripts: GET /daily-scripts."""
@@ -564,7 +615,7 @@ class _APIHandler(BaseHTTPRequestHandler):
                 del server._daily_scripts[name]
             self._send_json({"success": True, "data": {"removed": name}})
         except Exception as e:
-            self._send_json({"success": False, "error": str(e)}, 500)
+            self._send_internal_error(e, op="daily-scripts:delete")
 
     def _handle_vars(self):
         """Handle variable queries: GET /vars."""

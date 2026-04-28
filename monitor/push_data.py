@@ -11,11 +11,15 @@ Usage:
     python push_data.py --loop 30
 """
 
+import atexit
 import json
+import os
 import sqlite3
 import sys
+import tempfile
 import time
 import subprocess
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from datetime import datetime
 
@@ -28,6 +32,53 @@ RUNS_DIRS = [_PROJECT_ROOT / "bash_agent_runs", _PROJECT_ROOT / "codex_agent_run
 RUN_PARENT: dict[str, Path] = {}
 OUTPUT_FILE = Path(__file__).parent / "data.json"
 MODAL_VOLUME = "bossbench-monitor-data"
+
+_PLAIN_TMP_DIR = Path(os.environ.get(
+    "BOSSBENCH_PUSH_DATA_TMP_DIR",
+    f"/tmp/push_data_plain_{os.getuid()}",
+))
+
+
+def _ensure_plain_tmp_dir():
+    _PLAIN_TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _sweep_stale_plain_tmp():
+    if not _PLAIN_TMP_DIR.exists():
+        return
+    for f in _PLAIN_TMP_DIR.glob("push_data_*.plain.tmp"):
+        try:
+            f.unlink()
+        except Exception:
+            pass
+
+
+def _sweep_orphan_plain_tmp_for_active_runs(active_rids: set[str]):
+    """Parent-process orphan reaper. Keep newest tmp per active rid, delete the rest.
+
+    ProcessPoolExecutor.map doesn't pin tasks to workers — when worker A handles
+    rid X in cycle N and worker B handles X in cycle N+1, A's cached tmp is
+    orphaned (A may not receive any task in N+1, so its per-worker prune never
+    fires). This sweep runs in the parent and trims to one tmp file per rid
+    (the newest, which is the one the current cycle's worker just created).
+    """
+    if not _PLAIN_TMP_DIR.exists():
+        return
+    by_rid: dict[str, list] = {}
+    for f in _PLAIN_TMP_DIR.glob("push_data_*.plain.tmp"):
+        name = f.name[len("push_data_"):-len(".plain.tmp")]
+        rid = name.rsplit("_", 1)[0]
+        by_rid.setdefault(rid, []).append(f)
+    for rid, files in by_rid.items():
+        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        keep = files[:1] if rid in active_rids else []
+        for f in files:
+            if f in keep:
+                continue
+            try:
+                f.unlink()
+            except Exception:
+                pass
 
 
 class _CachedConn:
@@ -47,38 +98,47 @@ class _CachedConn:
         return getattr(self._conn, name)
 
 
-_DB_CACHE: dict[str, tuple[float, int, sqlite3.Connection]] = {}
+# Cache value: (mtime, size, conn, plain_tmp_path)
+_DB_CACHE: dict[str, tuple[float, int, sqlite3.Connection, str]] = {}
 
 
-def _close_cached_conn(conn):
-    """Close a conn from load_session_db(in_memory=False) and unlink its tmp file."""
-    tmp_path = getattr(conn, "_tmp_path", None)
+def _close_cached_entry(entry):
+    """Close a cached conn and unlink its plain-decrypt tmp file."""
+    _, _, conn, tmp_path = entry
     try:
         conn.close()
     except Exception:
         pass
-    if tmp_path:
-        import os
+    if tmp_path and os.path.exists(tmp_path):
         try:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            os.unlink(tmp_path)
         except Exception:
             pass
 
 
+def _cleanup_all_cached():
+    for entry in list(_DB_CACHE.values()):
+        _close_cached_entry(entry)
+    _DB_CACHE.clear()
+
+
+atexit.register(_cleanup_all_cached)
+_sweep_stale_plain_tmp()
+
+
 def _open_run_db(run_dir: Path):
-    """Open the run's obfuscated .nmdb database as a file-backed SQLite conn.
+    """Open the run's obfuscated .nmdb database as a plain SQLite conn.
 
-    Uses load_session_db(in_memory=False) so decrypted bytes live in a tmp file
-    on disk rather than :memory: — a 4.5 GB run would otherwise peak ~20 GB RSS
-    and get OOM-killed by the user cgroup.
+    Bulk-decrypts the .nmdb to a plain SQLite tmp file under
+    `_PLAIN_TMP_DIR` (on /scratch, not /tmp — these files can be 1-3 GB).
+    The resulting plain file is queried directly with stdlib sqlite3 so
+    follow-up queries pay zero per-page AES cost.
 
-    Returns a cached wrapper if nmdb mtime+size match a prior decrypt. Each
-    cache entry owns a tmp file that is unlinked when the entry is evicted.
+    Cache key is (nmdb_path, mtime, size). When the .nmdb is rewritten by
+    the simulation server (atomic replace → new mtime/size), the old
+    cached conn is closed and its plain tmp file is unlinked before a
+    fresh decrypt runs.
     """
-    # Prefer the most recently modified nmdb across the run dir — top-level
-    # copies can be stale/torn from a prior run's exit while the live session
-    # keeps writing fresh copies at agent_workspace/sessions/<sid>/world.nmdb.
     candidates = [c for c in run_dir.rglob("world.nmdb") if c.stat().st_size > 0]
     if not candidates:
         return None
@@ -88,14 +148,35 @@ def _open_run_db(run_dir: Path):
     cached = _DB_CACHE.get(key)
     if cached is not None and cached[0] == st.st_mtime and cached[1] == st.st_size:
         return _CachedConn(cached[2])
+
+    plain_path = None
     try:
-        from saas_bench.db_protection import load_session_db
-        conn = load_session_db(nmdb_path, in_memory=False)
+        from saas_bench.db_protection import _export_encrypted_to_plain, _get_key
+        _ensure_plain_tmp_dir()
+        rid_hint = run_dir.name.replace("run_", "") or "run"
+        fd, plain_path = tempfile.mkstemp(
+            prefix=f"push_data_{rid_hint}_",
+            suffix=".plain.tmp",
+            dir=str(_PLAIN_TMP_DIR),
+        )
+        os.close(fd)
+        os.unlink(plain_path)  # _export_encrypted_to_plain creates the file fresh
+        _export_encrypted_to_plain(str(nmdb_path), plain_path, _get_key())
+        conn = sqlite3.connect(plain_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA cache_size=-200000")
     except Exception:
+        if plain_path and os.path.exists(plain_path):
+            try:
+                os.unlink(plain_path)
+            except Exception:
+                pass
         return None
+
     if cached is not None:
-        _close_cached_conn(cached[2])
-    _DB_CACHE[key] = (st.st_mtime, st.st_size, conn)
+        _close_cached_entry(cached)
+
+    _DB_CACHE[key] = (st.st_mtime, st.st_size, conn, plain_path)
     return _CachedConn(conn)
 
 # Run registry
@@ -747,6 +828,13 @@ def get_run_data(run_id: str) -> dict:
             if data["total_days"] is None:
                 data["total_days"] = cfg.get("total_days")
             data["agent_type"] = cfg.get("agent_type")
+            # Variant label (e.g. "leads_x1.25"). Falls back to RUN_REGISTRY-derived
+            # label, then to "run_<id>". When present, prepended to the displayed
+            # label so the dashboard makes the variant identifiable at a glance.
+            cfg_label = cfg.get("label")
+            if cfg_label:
+                data["label"] = f"{cfg_label} ({run_id[:8]})"
+                data["variant"] = cfg_label
     # Fallback: infer from which runs-parent dir holds this run_id
     if not data["agent_type"]:
         data["agent_type"] = "codex" if parent.name == "codex_agent_runs" else "bash_agent"
@@ -1154,12 +1242,58 @@ def get_run_data(run_id: str) -> dict:
     return data
 
 
+_POOL: ProcessPoolExecutor | None = None
+_POOL_SIZE: int = 0
+
+
+def _worker_get_run_data(args):
+    """Worker entry: bind RUN_PARENT for this rid, then call get_run_data.
+
+    Each worker process keeps its own module globals (RUN_PARENT, _DB_CACHE)
+    alive across calls. ProcessPoolExecutor.map does not pin tasks to workers,
+    so a worker may process rid X in one cycle and rid Y in the next — the
+    cache entry for X would otherwise leak its plain-decrypt tmp file. Prune
+    any cache entries whose nmdb path is not under the current rid's run dir.
+    """
+    rid, parent_str = args
+    RUN_PARENT[rid] = Path(parent_str)
+    rid_marker = f"/run_{rid}/"
+    for k in list(_DB_CACHE.keys()):
+        if rid_marker not in k:
+            _close_cached_entry(_DB_CACHE.pop(k))
+    return get_run_data(rid)
+
+
+def _get_pool(n_workers: int) -> ProcessPoolExecutor:
+    """Lazily create and reuse a process pool sized to the run count."""
+    global _POOL, _POOL_SIZE
+    if _POOL is not None and _POOL_SIZE >= n_workers:
+        return _POOL
+    if _POOL is not None:
+        _POOL.shutdown(wait=False, cancel_futures=True)
+    _POOL_SIZE = max(n_workers, 1)
+    _POOL = ProcessPoolExecutor(max_workers=_POOL_SIZE)
+    return _POOL
+
+
 def push_data():
     """Collect all run data and write to JSON file."""
     run_ids = get_run_ids()
+    _sweep_orphan_plain_tmp_for_active_runs(set(run_ids))
+    n = len(run_ids)
+    if n > 1:
+        # Parallelize per-run collection: each worker independently decrypts
+        # its nmdb and runs DB queries. Cap workers to avoid CPU oversubscription
+        # against the 8 active sim processes.
+        max_workers = min(n, max((os.cpu_count() or 4) // 2, 1))
+        pool = _get_pool(max_workers)
+        args = [(rid, str(RUN_PARENT.get(rid, RUNS_DIR))) for rid in run_ids]
+        runs = list(pool.map(_worker_get_run_data, args))
+    else:
+        runs = [get_run_data(rid) for rid in run_ids]
     all_data = {
         "timestamp": datetime.now(tz=__import__('datetime').timezone.utc).isoformat(),
-        "runs": [get_run_data(rid) for rid in run_ids],
+        "runs": runs,
     }
     with open(OUTPUT_FILE, "w") as f:
         json.dump(all_data, f)
