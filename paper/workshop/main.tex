@@ -84,13 +84,13 @@
 
 \section{Introduction and Related Work}
 
-Language model agents have demonstrated proficiency at isolated, short-horizon tasks---resolving GitHub issues~\cite{jimenez2024swebench}, handling customer service requests~\cite{yao2024taubench}, and navigating websites~\cite{zhou2024webarena}. Yet what we recognize as intelligence in people---navigating uncertainty over long horizons, reading between the lines of incomplete information, adapting when the world shifts, and orchestrating many moving parts toward a coherent goal---remains largely untested.
+Language model agents have demonstrated proficiency at isolated, short-horizon tasks---resolving GitHub issues~\cite{jimenez2024swebench}, handling customer service requests~\cite{yao2024taubench}, and navigating websites~\cite{zhou2024webarena}. As agents approach reliable execution of such individual tasks, a natural next question is what we should expect them to do after the local task is no longer the bottleneck. A crucial part of what we consider great human intelligence---the kind behind many major human achievements---is the ability to navigate uncertainty over long horizons, read between the lines of incomplete information, adapt when the world shifts, and orchestrate many moving parts toward a coherent goal. This remains largely untested.
 
 Existing benchmarks evaluate episodic tasks in stationary environments where the horizon spans minutes to hours~\cite{jimenez2024swebench,zhou2024webarena,liu2023agentbench,mialon2024gaia}. Even $\tau$-bench~\cite{yao2024taubench}, which models customer service as a POMDP, is scoped to single conversations with no persistent consequences. VendingBench~\cite{backlund2025vendingbench} takes a step toward long-horizon evaluation, but the action space is narrow and the environment lacks the interdependent decision domains and latent-state complexity that require coordinated strategic planning. We introduce \textsc{CEOBench} to fill this gap.
 
 \section{Benchmark Design}
 
-In \textsc{CEOBench}, an agent operates a subscription-based software company over 500 simulated days, taking hundreds of actions per day across six interdependent domains: pricing, infrastructure capacity, marketing, R\&D, enterprise negotiations, and financial management. It accesses 30+ tools and 34 database tables. The benchmark stresses four axes of difficulty:
+In \textsc{CEOBench}, an agent operates a subscription-based software company over 500 simulated days, taking hundreds of actions per day across six interdependent domains: pricing, infrastructure capacity, marketing, R\&D, enterprise negotiations, and financial management. It accesses 34 tools and 19 database tables. The benchmark stresses four axes of difficulty:
 \begin{itemize}
   \item \textbf{Long-horizon planning.} A 500-day episode spanning tens of thousands of actions requires a coherent long-term strategy balancing short-term survival against long-term growth.
   \item \textbf{Partial observability.} Customer satisfaction, reputation, churn probabilities, and preference drift parameters are hidden---the agent infers latent state from aggregate metrics and social media.

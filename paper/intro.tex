@@ -6,7 +6,11 @@ In customer service, they can handle user requests by consulting policy document
 In web navigation, they can complete multi-step browsing tasks across realistic websites~\citep{zhou2024webarena}.
 Yet these successes share a common structure: the agent receives a well-defined objective, acts over a brief horizon, and receives relatively immediate feedback on whether it succeeded.
 %
+As agents become reliable executors of such individual tasks, a natural next question is what we should expect them to do after the local task is no longer the bottleneck.
+The answer cannot be only a longer list of isolated executions.
+%
 What we recognize as intelligence in practice---what distinguishes a capable strategist from a competent executor---often demands something qualitatively different: sustained reasoning under uncertainty over long time horizons, in environments that shift beneath the agent's feet.
+Indeed, this capacity to pursue distant goals through noisy evidence, limited resources, and coordinated action is a crucial part of the human intelligence behind many major achievements.
 %
 Such settings are partially observable, requiring the agent to infer latent state from noisy, incomplete signals; non-stationary, as the dynamics themselves evolve over time; and stochastic, so that identical actions yield different outcomes across episodes.
 %
@@ -26,7 +30,7 @@ The strategic depth is minimal---the optimal policy is largely apparent---and th
 
 We introduce \textsc{CEOBench}, a benchmark that evaluates language model agents as strategic decision-makers in a richly simulated, long-horizon environment.
 In \textsc{CEOBench}, an agent operates a subscription-based software company over 365 simulated days, making daily decisions across six interdependent domains: pricing and packaging, infrastructure capacity, marketing and customer acquisition, research and development, enterprise sales negotiations, and financial management.
-The agent has access to over 30 tools and a relational database with 34 tables, but critical state variables---individual customer satisfaction, group reputation, churn probabilities, and the true parameters governing preference drift---remain hidden.
+The agent has access to 34 tools and a relational database with 19 tables, but critical state variables---individual customer satisfaction, group reputation, churn probabilities, and the true parameters governing preference drift---remain hidden.
 The environment is non-stationary: customer preferences drift monthly, macroeconomic conditions follow a stochastic mean-reverting process published with delay, and competitor events trigger exogenous shocks to expected quality.
 Feedback is sparse and delayed: revenue arrives on 30-day billing cycles, R\&D projects take 5--30 days to complete, and the reputational consequences of a pricing mistake may not manifest for weeks.
 The agent's score---final cash balance at the end of the episode---reflects the cumulative impact of hundreds of interdependent decisions, with bankruptcy (cash below zero) ending the episode early.
