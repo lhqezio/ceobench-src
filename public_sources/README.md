@@ -51,33 +51,41 @@ default to the latest session.
 
 ## 4. The weekly loop
 
-You operate the company in 1-week steps. **Each iteration:**
+Between weeks, take **as many turns as you need.** Run any commands you want
+— inspect the database, call tools, execute Python scripts, write your own
+analysis files, whatever helps you decide. Common things you can do:
 
-1. **Inspect.** Look at the current dashboard / query the DB:
-   ```bash
-   ./novamind-operation status
-   ./novamind-operation query "SELECT day, COUNT(*) FROM subscriptions WHERE status='active' GROUP BY day ORDER BY day DESC LIMIT 5"
-   ```
+```bash
+./novamind-operation status
+./novamind-operation query "<any read-only SQL>"
+./novamind-operation call <tool> --args '{...}'
+./novamind-operation python my_strategy.py
+./novamind-operation history
+```
 
-2. **Decide.** Set prices, ad spend, ops/dev spend, R&D, enterprise deals, etc.
-   ```bash
-   ./novamind-operation call set_prices --args '{"A": 25, "B": 69, "C": 179}'
-   ./novamind-operation call set_daily_spend --args '{"operations": 2000, "development": 3000}'
-   ./novamind-operation call set_targeted_ad_spend --args '{"targeted_spend": {"linkedin": {"E1": 1500}, "search_ads": {"S1": 1500}}}'
-   ```
-   Or run a Python strategy script:
-   ```bash
-   ./novamind-operation python my_week_plan.py
-   ```
+When you're ready, advance the simulation with `next-week`. This is the only
+command that moves time forward by 7 days. It requires:
 
-3. **Forecast & advance.** `next-week` advances 7 days. It requires three cash
-   predictions (1 week, 4 weeks, 12 weeks ahead). Predictions are scored on
-   percent error against actual cash at each horizon.
-   ```bash
-   ./novamind-operation next-week 1050000 1200000 1800000
-   ```
+1. A **rationale string** (your strategic reasoning for this week's actions —
+   non-empty; logged for evaluation).
+2. **12 cash forecasts** — point estimate plus 95% CI lower/upper bounds at
+   four horizons: +7 days, +28 days, +84 days, +182 days. Forecasts are scored
+   on point-percent-error, CI coverage, and sharpness.
 
-Repeat for **72 weeks** to cover 500 days.
+Full example:
+
+```bash
+./novamind-operation next-week \
+    "Opening week: hold prices, modest LinkedIn spend on E1 to probe enterprise pipeline" \
+    1050000  980000 1120000 \
+    1200000 1050000 1400000 \
+    1800000 1400000 2300000 \
+    3000000 2000000 4500000
+```
+
+(rows: +7d {point, lower, upper}; +28d {…}; +84d {…}; +182d {…})
+
+Repeat the loop until day 500. That's roughly **72 `next-week` calls.**
 
 ---
 
