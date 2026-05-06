@@ -176,9 +176,9 @@ Daily costs: capacity tier + compute (usage × tier cost) + advertising + operat
 - Viral negative posts can significantly damage reputation
 - You can post or reply to customer posts via `post_social_media` (max 280 chars, 1/week) — strong posts go viral. Viral posts can either boost or tank new lead arrival speed for each group depending on whether that customer group likes the post or not
 
-**CRITICAL REQUIREMENT:** You MUST call `log_rationale` EXACTLY ONCE per week, immediately before advancing to the next week. This is NOT optional.
+**CRITICAL REQUIREMENT:** Every `next-week` call MUST include a `rationale` argument — your strategic reasoning for this week's actions. This replaces the old standalone `log_rationale` tool, which has been removed. The server returns 400 if `rationale` is missing or empty.
 
-**IMPORTANT:** Log exactly ONE rationale per week - no more, no less. Your single weekly rationale should include:
+**IMPORTANT:** Submit ONE rationale per week alongside your forecasts — no more, no less. Your weekly rationale should include:
 - Your analysis of the current situation and key metrics
 - What changes you made (or why you kept settings the same)
 - Your strategy and any hypotheses you're testing
@@ -188,29 +188,31 @@ You can call any tool any number of times within a week. Advance to the next wee
 
 **NOTE:** The `next_week` call may take a long time (several minutes) at large subscriber counts. The simulator processes billing, churn, usage, reputation, and other mechanics for every customer individually across 7 simulated days. This is normal and expected — just wait for the response. Do not assume the call has failed or timed out.
 
-## Weekly Cash Forecasts with 95% Confidence Intervals (MANDATORY)
+## Weekly Rationale + Cash Forecasts (MANDATORY)
 
-Before advancing to the next week, you **MUST** submit cash forecasts at FOUR horizons. For each horizon submit a **point estimate** plus **95% confidence interval lower and upper bounds**. The `next-week` command takes 12 positional arguments in this exact order:
+Before advancing to the next week, you **MUST** submit (a) a `rationale` string and (b) cash forecasts at FOUR horizons. For each horizon submit a **point estimate** plus **95% confidence interval lower and upper bounds**. The `next-week` command takes 13 positional arguments in this exact order — rationale first, then 12 forecast numbers:
 
 ```
 ./novamind-operation next-week \
+    "<rationale: your strategic reasoning for this week's actions>" \
     <cash_1wk_point>  <cash_1wk_lower>  <cash_1wk_upper>  \
     <cash_4wk_point>  <cash_4wk_lower>  <cash_4wk_upper>  \
     <cash_12wk_point> <cash_12wk_lower> <cash_12wk_upper> \
     <cash_26wk_point> <cash_26wk_lower> <cash_26wk_upper>
 ```
 
-| Horizon | Days | Fields |
-|---------|------|--------|
-| 1 week  | +7   | `cash_1wk_point`,  `cash_1wk_lower`,  `cash_1wk_upper`  |
-| 4 weeks | +28  | `cash_4wk_point`,  `cash_4wk_lower`,  `cash_4wk_upper`  |
-| 12 weeks | +84  | `cash_12wk_point`, `cash_12wk_lower`, `cash_12wk_upper` |
-| 26 weeks (~6 mo) | +182 | `cash_26wk_point`, `cash_26wk_lower`, `cash_26wk_upper` |
+| Position | Field | Notes |
+|----------|-------|-------|
+| 1 | `rationale` | Required, non-empty string. Recorded for analysis (does not affect scoring). |
+| 2–4 | `cash_1wk_*` | +7 days |
+| 5–7 | `cash_4wk_*` | +28 days |
+| 8–10 | `cash_12wk_*` | +84 days |
+| 11–13 | `cash_26wk_*` | +182 days (~6 months) |
 
-**Constraint per horizon:** `lower <= point <= upper`. The server returns 400 if any field is missing, non-numeric, or violates the ordering.
+**Constraint per horizon:** `lower <= point <= upper`. The server returns 400 if any field is missing, non-numeric, or violates the ordering. The server also returns 400 if `rationale` is missing or empty.
 
 A *95% confidence interval* means: you believe there's a 95% probability the actual cash on day `submit_day + horizon` will fall inside `[lower, upper]`. Submit *honest* intervals — wide for uncertain horizons (say, 6 months), narrow when you have high confidence (e.g. 1 week if cash flow is stable).
 
-All values are dollars (e.g. `1250000.0`). All 12 are required.
+All forecast values are dollars (e.g. `1250000.0`). All 12 are required, in addition to the rationale string.
 
 Predictions are stored at submission time; updating them later is not possible. Plan your forecast before you advance.

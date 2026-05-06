@@ -29,11 +29,15 @@ for i in range(DAYS_TO_PLAY):
         "content_marketing": {"S1": 50,  "S2": 50,  "S3": 50},
         "referral_program":  {"S1": 50,  "S2": 50,  "S3": 0},
     })
-    nm.analytics.log_rationale(f"Day {day}: Autoplay basic strategy")
-
     # --- Advance the week ---
-    # Call next-week via the API directly
-    result = nm._client.next_week()
+    # `rationale` is a required argument of next_week (replaces the old
+    # standalone log_rationale tool). `predictions` is also required —
+    # supply your best guess for cash at +7d/+28d/+84d/+182d with 95% CI.
+    rationale = f"Day {day}: Autoplay basic strategy — fixed prices + targeted ads."
+    # Trivial dummy forecast — replace with a real model in a serious agent.
+    flat = {"point": 1_000_000.0, "lower": 0.0, "upper": 5_000_000.0}
+    predictions = {"cash_1wk": flat, "cash_4wk": flat, "cash_12wk": flat, "cash_26wk": flat}
+    result = nm._client.next_week(predictions=predictions, rationale=rationale)
 
     if result.get("success"):
         new_day = result.get("day", "?")

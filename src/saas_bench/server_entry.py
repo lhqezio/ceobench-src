@@ -32,7 +32,13 @@ from saas_bench.tools import AgentTools
 from saas_bench.shocks import ShockManager
 from saas_bench.event_logger import EventLogger
 from saas_bench.api_server import NovaMindAPIServer
-from saas_bench.db_protection import protect_db, save_session_db, load_session_db
+from saas_bench.db_protection import (
+    protect_db,
+    save_session_db,
+    load_session_db,
+    snapshot_to_plain,
+    AsyncSaver,
+)
 from saas_bench.docs_generator import initialize_workspace
 
 
@@ -254,13 +260,20 @@ def cmd_start_server(args, base: Path):
         with open(history_path, "a") as f:
             f.write(json.dumps(entry, default=str) + "\n")
 
+    # Async encrypter for the per-day save. The hot path snapshots the
+    # in-memory conn to a plain tmp file (~10s on 1.5 GB) and submits it;
+    # the worker thread does the ~90s encrypt + atomic-replace off the
+    # next-week response path. Drained on shutdown.
+    async_saver = AsyncSaver(nmdb_path)
+
     # Day callback — save state after each day
     def _day_callback(day, dashboard):
         meta["current_day"] = day
         meta["status"] = "running"
         _session_meta_path(base, session_id).write_text(json.dumps(meta, indent=2))
-        # Save protected DB after each day
-        save_session_db(conn, nmdb_path)
+        # Snapshot synchronously, queue encrypt to background worker.
+        plain = snapshot_to_plain(conn, nmdb_path.parent)
+        async_saver.submit(plain)
         # Log to history
         _log_history({"type": "next_week", "day": day, "timestamp": time.time()})
 
@@ -307,7 +320,13 @@ def cmd_start_server(args, base: Path):
             return
         shutdown_requested = True
         api_server.stop()
-        # Final save
+        # Drain the async encrypter, then write a fresh synchronous save so
+        # any post-day-callback writes (agent tool calls between days) land
+        # before exit.
+        try:
+            async_saver.shutdown(wait=True, timeout=180.0)
+        except Exception:
+            pass
         save_session_db(conn, nmdb_path)
         meta["status"] = "stopped"
         meta.pop("port", None)

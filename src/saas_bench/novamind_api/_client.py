@@ -75,7 +75,7 @@ def call(tool_name: str, args: Optional[Dict[str, Any]] = None) -> Dict[str, Any
     return result.get('data', {})
 
 
-def next_week(predictions: Dict[str, Any] = None) -> Dict[str, Any]:
+def next_week(predictions: Dict[str, Any] = None, rationale: str = None) -> Dict[str, Any]:
     """Advance the simulator by one week (7 days).
 
     Args:
@@ -87,6 +87,9 @@ def next_week(predictions: Dict[str, Any] = None) -> Dict[str, Any]:
             ``upper`` (95% CI upper bound). Constraint per horizon:
             ``lower <= point <= upper``. Server returns 400 on any
             missing key, missing field, non-numeric value, or violated constraint.
+        rationale: Required non-empty string capturing your strategic reasoning
+            for this week's actions. Replaces the old standalone log_rationale
+            tool. Server returns 400 if missing or empty.
 
     Returns:
         Dict with 'day' and 'dashboard' keys
@@ -97,6 +100,11 @@ def next_week(predictions: Dict[str, Any] = None) -> Dict[str, Any]:
             "cash_1wk, cash_4wk, cash_12wk, cash_26wk; each value an object "
             "{point, lower, upper} (95% CI bounds in dollars)."
         )
+    if not isinstance(rationale, str) or not rationale.strip():
+        raise NovaMindAPIError(
+            "next_week() requires a non-empty 'rationale' string capturing "
+            "your strategic reasoning for this week's actions."
+        )
 
     def _entry(p):
         return {
@@ -105,12 +113,15 @@ def next_week(predictions: Dict[str, Any] = None) -> Dict[str, Any]:
             "upper": float(p["upper"]),
         }
 
-    body = json.dumps({"predictions": {
-        "cash_1wk":  _entry(predictions["cash_1wk"]),
-        "cash_4wk":  _entry(predictions["cash_4wk"]),
-        "cash_12wk": _entry(predictions["cash_12wk"]),
-        "cash_26wk": _entry(predictions["cash_26wk"]),
-    }}).encode('utf-8')
+    body = json.dumps({
+        "rationale": rationale,
+        "predictions": {
+            "cash_1wk":  _entry(predictions["cash_1wk"]),
+            "cash_4wk":  _entry(predictions["cash_4wk"]),
+            "cash_12wk": _entry(predictions["cash_12wk"]),
+            "cash_26wk": _entry(predictions["cash_26wk"]),
+        },
+    }).encode('utf-8')
 
     url = f"{_base_url()}/next-week"
     req = urllib.request.Request(

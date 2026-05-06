@@ -86,7 +86,8 @@ projects = nm.research.list_research_projects()
 posts = nm.analytics.get_social_posts(days=7, limit=50)
 nm.analytics.set_targeted_ops_spend(targeted_spend={"E1": 100.0})
 nm.analytics.set_targeted_dev_spend(targeted_spend={"S1": 200.0})
-nm.analytics.log_rationale("My strategic analysis for this week...")
+# Note: rationale is now a required argument of `next-week` (see CLI section below).
+# The standalone `log_rationale` tool has been removed.
 
 # === Variables ===
 current_day = nm.vars.current_day
@@ -98,7 +99,7 @@ All interaction goes through the `./novamind-operation` CLI:
 
 ```bash
 # Simulation control
-./novamind-operation next-week             # Advance to next week (REQUIRED — do this every week)
+./novamind-operation next-week "<rationale>" <12 cash forecasts>  # Advance to next week (REQUIRED — do this every week)
 
 # Running Python scripts
 ./novamind-operation python my_script.py   # Run a script with novamind_api available
@@ -121,7 +122,7 @@ cat docs/api/marketing.json   # set_daily_spend (ops/dev only), set_targeted_ad_
 cat docs/api/enterprise.json  # send_enterprise_deal, reject_enterprise_deal
 cat docs/api/market.json      # research_market, research_group, get_market_overview, get_group_insights
 cat docs/api/research.json    # start_research_project, list_research_projects
-cat docs/api/analytics.json   # get_social_posts, set_targeted_ops_spend, set_targeted_dev_spend, log_rationale
+cat docs/api/analytics.json   # get_social_posts, set_targeted_ops_spend, set_targeted_dev_spend
 cat docs/api/infrastructure.json  # set_capacity_tier, get_cost_info
 ```
 
@@ -206,29 +207,28 @@ Each week follows this pattern:
 3. **Analyze the situation** — check metrics, inbox, social posts
 4. **Take actions** — adjust pricing, spending, respond to deals, etc.
 5. **Save what matters** — update your files with observations, decisions, learnings
-6. **Log rationale** — `./novamind-operation python-c "import novamind_api as nm; nm.analytics.log_rationale('...')"`
-7. **Forecast + Advance** — `./novamind-operation next-week <12 numbers>` (see below)
+6. **Forecast + Advance** — `./novamind-operation next-week "<rationale>" <12 numbers>` (see below)
 
-**CRITICAL:** You MUST call `log_rationale` exactly once per week, before `next-week`.
-
-**CRITICAL:** `next-week` now requires *12* positional cash forecasts in dollars — for each of FOUR horizons, submit a point estimate plus 95% CI lower and upper bounds:
+**CRITICAL:** `next-week` now requires *13* positional arguments — a rationale string + 12 cash forecasts in dollars. The rationale is your strategic reasoning for this week's actions; it replaces the old standalone `log_rationale` tool. For each of FOUR horizons, submit a point estimate plus 95% CI lower and upper bounds:
 
 | Position | Field | Meaning |
 |----------|-------|---------|
-| 1–3 | `cash_1wk_point  cash_1wk_lower  cash_1wk_upper`   | +7 days |
-| 4–6 | `cash_4wk_point  cash_4wk_lower  cash_4wk_upper`   | +28 days |
-| 7–9 | `cash_12wk_point cash_12wk_lower cash_12wk_upper` | +84 days |
-| 10–12 | `cash_26wk_point cash_26wk_lower cash_26wk_upper` | +182 days (~6 months) |
+| 1 | `rationale` | Your strategic reasoning for this week's actions (non-empty quoted string) |
+| 2–4 | `cash_1wk_point  cash_1wk_lower  cash_1wk_upper`   | +7 days |
+| 5–7 | `cash_4wk_point  cash_4wk_lower  cash_4wk_upper`   | +28 days |
+| 8–10 | `cash_12wk_point cash_12wk_lower cash_12wk_upper` | +84 days |
+| 11–13 | `cash_26wk_point cash_26wk_lower cash_26wk_upper` | +182 days (~6 months) |
 
 Constraint per horizon: `lower <= point <= upper`. Submit honest 95% intervals — wider intervals signal larger uncertainty; narrow them when you're confident.
 
 Example:
 ```
 ./novamind-operation next-week \
+    "Holding prices, raising linkedin spend on E1 to push enterprise pipeline; expect +5% subs" \
     1050000 1000000 1100000 \
     1200000 1050000 1400000 \
     1800000 1400000 2300000 \
     3000000 2000000 4500000
 ```
 
-You are evaluated on (a) point-estimate percent error at each horizon, (b) CI coverage — does actual cash fall inside [lower, upper]? — and (c) sharpness (CI width relative to actual). Form forecasts from your internal model of growth, churn, costs, and competitor dynamics — don't guess.
+You are evaluated on (a) point-estimate percent error at each horizon, (b) CI coverage — does actual cash fall inside [lower, upper]? — and (c) sharpness (CI width relative to actual). Form forecasts from your internal model of growth, churn, costs, and competitor dynamics — don't guess. The rationale is recorded for analysis (does not affect scoring), but it is *required* — `next-week` will refuse an empty rationale.

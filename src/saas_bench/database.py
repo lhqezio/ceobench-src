@@ -761,13 +761,24 @@ def init_database(db_path: Path) -> sqlite3.Connection:
         );
 
         -- Competitor Events: periodic competitor launches that raise user expectations
+        --
+        -- v3.4ai+: Each event compares two terms and applies the larger:
+        --   sampled_boost = clamp(lognormal(...)) * magnitude_scale  (stochastic component)
+        --   feedback_term = feedback_u * unreleased_pre              (reactive to our undisclosed dev)
+        -- where unreleased_pre is the value of `unreleased_base_quality_improvement`
+        -- BEFORE the event consumes from it. `winner` ∈ {'sampled', 'feedback'}.
         CREATE TABLE IF NOT EXISTS competitor_events (
             event_id INTEGER PRIMARY KEY AUTOINCREMENT,
             start_day INTEGER NOT NULL,
-            boost_amount REAL NOT NULL,          -- How much expected quality increased
+            boost_amount REAL NOT NULL,          -- Final boost actually applied (max of sampled/feedback)
             post_end_day INTEGER NOT NULL,       -- Last day of competitor-themed social posts
             description TEXT,                     -- Human-readable description of the event
-            applied INTEGER DEFAULT 0            -- 1 if boost already applied to all users
+            applied INTEGER DEFAULT 0,           -- 1 if boost already applied to all users
+            sampled_boost REAL,                  -- v3.4ai: clamped lognormal × magnitude_scale
+            feedback_u REAL,                     -- v3.4aj: u ~ Uniform(0.5, 0.7) for this event
+            unreleased_pre REAL,                 -- v3.4ai: bank balance BEFORE this event
+            feedback_term REAL,                  -- v3.4ai: feedback_u * unreleased_pre
+            winner TEXT                          -- v3.4ai: 'sampled' or 'feedback'
         );
         CREATE INDEX IF NOT EXISTS idx_competitor_events_day ON competitor_events(start_day);
 
@@ -925,6 +936,20 @@ def init_database(db_path: Path) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_et_active_thread_msgid
             ON enterprise_turns(thread_id, message_id DESC)
             WHERE closed = 0 AND _internal_status IS NULL;
+        -- L9: Agent inspection queries (run 27c000a5 d105 hang trigger). The
+        -- agent commonly aggregates by (turn_number, sender) — e.g. "how many
+        -- system seed turns?". Without this, those queries scan the full
+        -- enterprise_turns table (millions of rows late-game) under the
+        -- api_server lock.
+        CREATE INDEX IF NOT EXISTS idx_et_turn_sender
+            ON enterprise_turns(turn_number, sender);
+        -- L9: Customer breakdown by (customer_type, group_id). The existing
+        -- idx_customers_type is partial (status='subscribed') and ordered
+        -- (customer_type, customer_id), so GROUP BY group_id falls back to
+        -- TEMP B-TREE FOR GROUP BY + TEMP B-TREE FOR ORDER BY. This non-partial
+        -- index covers the agent's common breakdown queries.
+        CREATE INDEX IF NOT EXISTS idx_customers_type_group
+            ON customers(customer_type, group_id);
 
         -- =====================================================================
         -- Hidden Snapshot Tables (for post-run analysis, invisible to agent)
@@ -987,6 +1012,17 @@ def init_database(db_path: Path) -> sqlite3.Connection:
             daily_leads_expected REAL NOT NULL,
             actual_leads INTEGER NOT NULL,
             PRIMARY KEY (day, group_id)
+        );
+
+        -- v3.4ai: monthly snapshot of leads_per_1000_dollars per (channel, group)
+        -- Captured each time _apply_monthly_leads_noise runs (every 30 sim days).
+        -- Engine-only: NOT exposed via novamind_api (api_server._HIDDEN_TABLES).
+        CREATE TABLE IF NOT EXISTS _hidden_leads_per_1k_snapshot (
+            day INTEGER NOT NULL,
+            channel_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            value REAL NOT NULL,
+            PRIMARY KEY (day, channel_id, group_id)
         );
 
         -- Agent-authored social media posts & replies
@@ -1066,6 +1102,19 @@ def init_database(db_path: Path) -> sqlite3.Connection:
         conn.execute("ALTER TABLE social_media_posts ADD COLUMN source_group_id TEXT")
     except sqlite3.OperationalError:
         pass  # Column already exists
+
+    # v3.4ai migration: per-event sampled vs feedback breakdown on competitor_events
+    for col, col_type in [
+        ('sampled_boost', 'REAL'),
+        ('feedback_u', 'REAL'),
+        ('unreleased_pre', 'REAL'),
+        ('feedback_term', 'REAL'),
+        ('winner', 'TEXT'),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE competitor_events ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
     # L8 migration: drop redundant daily_usage day index (PK already covers it)
     # and ensure new active-thread partial index exists on existing databases

@@ -211,7 +211,12 @@ def cmd_new_session(args):
 def cmd_next_week(args):
     session_id = _resolve_session(args.session)
     port = _ensure_server_running(session_id)
+    rationale = (args.rationale or "").strip()
+    if not rationale:
+        print("Error: rationale is required and must be a non-empty string.", file=sys.stderr)
+        sys.exit(1)
     body = {
+        "rationale": rationale,
         "predictions": {
             "cash_1wk":  {"point": float(args.cash_1wk_point),  "lower": float(args.cash_1wk_lower),  "upper": float(args.cash_1wk_upper)},
             "cash_4wk":  {"point": float(args.cash_4wk_point),  "lower": float(args.cash_4wk_lower),  "upper": float(args.cash_4wk_upper)},
@@ -226,14 +231,15 @@ def cmd_next_week(args):
         _log_history(session_id, {
             "type": "next_week",
             "day": result.get("day"),
+            "rationale": rationale,
             "predictions": body["predictions"],
             "timestamp": time.time(),
         })
     else:
         error = result.get("error", "Unknown error")
         print(f"Error: {error}", file=sys.stderr)
-        if error == "step_day_timeout":
-            print("The simulation day took too long. Try again.", file=sys.stderr)
+        if error in ("step_week_timeout", "step_day_timeout"):
+            print("The simulation week took too long; the run will be terminated.", file=sys.stderr)
         sys.exit(1)
 
 
@@ -453,8 +459,10 @@ def main():
         epilog="""
 Examples:
   ./novamind-operation new-session --days 365 --seed 42
-  ./novamind-operation next-week 1050000 1000000 1100000  1200000 1050000 1400000  1800000 1400000 2300000  3000000 2000000 4500000
-                                  # cash forecasts: per horizon (+7d/+28d/+84d/+182d), submit point + 95% CI low/high
+  ./novamind-operation next-week "Holding prices, raising ad spend on E1 to push enterprise pipeline" \
+                                  1050000 1000000 1100000  1200000 1050000 1400000  1800000 1400000 2300000  3000000 2000000 4500000
+                                  # rationale (required, non-empty) + 12 cash forecasts:
+                                  # per horizon (+7d/+28d/+84d/+182d), submit point + 95% CI low/high
   ./novamind-operation python my_strategy.py
   ./novamind-operation python-c "import novamind_api as nm; nm.pricing.set_prices(A=25)"
   ./novamind-operation call set_prices --args '{"A": 29.99, "B": 69.99}'
@@ -475,14 +483,18 @@ Examples:
 
     p = subparsers.add_parser(
         "next-week",
-        help="Advance simulation by one week (7 days). Requires 12 cash forecasts: point + 95%% CI bounds at +7d/+28d/+84d/+182d.",
+        help="Advance simulation by one week (7 days). Requires a rationale string + 12 cash forecasts.",
         description=(
-            "Advance the simulation by 7 days. You MUST submit cash forecasts at four "
-            "horizons (+7d, +28d, +84d, +182d). For EACH horizon submit a point estimate "
-            "plus 95% CI lower and upper bounds (lower <= point <= upper). 12 numbers "
-            "total. Scored on point-percent-error, CI coverage, and sharpness at each horizon."
+            "Advance the simulation by 7 days. You MUST submit:\n"
+            "  1. A rationale string (your strategic reasoning for this week's actions, non-empty).\n"
+            "  2. Cash forecasts at four horizons (+7d, +28d, +84d, +182d). For EACH horizon submit a "
+            "point estimate plus 95% CI lower and upper bounds (lower <= point <= upper). 12 numbers total. "
+            "Scored on point-percent-error, CI coverage, and sharpness at each horizon.\n"
+            "\n"
+            "Rationale replaces the old standalone log_rationale tool — it is now a required argument here."
         ),
     )
+    p.add_argument("rationale", type=str, help="Your strategic reasoning for this week's actions (required, non-empty)")
     p.add_argument("cash_1wk_point",  type=float, help="Point estimate of cash +7 days")
     p.add_argument("cash_1wk_lower",  type=float, help="95%% CI lower bound, +7 days")
     p.add_argument("cash_1wk_upper",  type=float, help="95%% CI upper bound, +7 days")

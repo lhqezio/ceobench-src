@@ -24,7 +24,11 @@ Public API:
 
 import os
 import sqlite3
+import sys
 import tempfile
+import threading
+import time
+import traceback
 from pathlib import Path
 from typing import Optional, Union
 
@@ -169,6 +173,62 @@ def unprotect_db(nmdb_path: Path, output_path: Path) -> None:
     _export_encrypted_to_plain(str(nmdb_path), str(output_path), key)
 
 
+def snapshot_to_plain(conn, parent_dir: Union[str, Path]) -> str:
+    """Dump caller's conn into a fresh plain SQLite tmp file under parent_dir.
+
+    Returns the absolute path of the tmp file. Caller owns the lifecycle
+    (typically passes it to AsyncSaver.submit, which unlinks after encrypt).
+
+    Uses sqlite3 backup, which works whether `conn` is a sqlite3.Connection
+    (in-memory or file) or a sqlcipher3 connection — backup is a page-level
+    copy and the freshly created plain file has no key.
+    """
+    parent = Path(parent_dir)
+    parent.mkdir(parents=True, exist_ok=True)
+
+    plain_fd, plain_path = tempfile.mkstemp(suffix=".plain.tmp", dir=str(parent))
+    os.close(plain_fd)
+    os.unlink(plain_path)  # sqlite3.connect will create it
+
+    plain_conn = sqlite3.connect(plain_path)
+    try:
+        conn.backup(plain_conn)
+    finally:
+        plain_conn.close()
+    return plain_path
+
+
+def encrypt_plain_atomic(
+    plain_path: Union[str, Path],
+    nmdb_path: Union[str, Path],
+    *,
+    key: Optional[str] = None,
+) -> None:
+    """Encrypt a plain SQLite file → atomically replace nmdb_path.
+
+    Writes to a sibling tmp file, then os.replace. Does NOT unlink
+    plain_path on success (caller decides — the AsyncSaver does).
+    """
+    key = key or _get_key()
+    nmdb_path = Path(nmdb_path)
+    parent = nmdb_path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+
+    enc_fd, enc_path = tempfile.mkstemp(suffix=".nmdb.tmp", dir=str(parent))
+    os.close(enc_fd)
+    os.unlink(enc_path)
+
+    try:
+        _export_plain_to_encrypted(str(plain_path), enc_path, key)
+        os.replace(enc_path, str(nmdb_path))
+    finally:
+        if os.path.exists(enc_path):
+            try:
+                os.unlink(enc_path)
+            except Exception:
+                pass
+
+
 def save_session_db(conn, nmdb_path: Path, _db_path: Path = None) -> None:
     """Save a connection's DB state to an encrypted .nmdb file.
 
@@ -177,7 +237,9 @@ def save_session_db(conn, nmdb_path: Path, _db_path: Path = None) -> None:
     - Otherwise (e.g. an in-memory sqlite3 connection), this backs up the
       full DB into a fresh encrypted file, atomically replacing nmdb_path.
 
-    Atomic: writes to a sibling tmp file, then `os.replace`.
+    Synchronous. For latency-sensitive callers (the per-day callback on the
+    server's hot path), use `snapshot_to_plain` + `AsyncSaver` instead so
+    the ~90s encrypt step doesn't block the response.
     """
     nmdb_path = Path(nmdb_path)
 
@@ -191,43 +253,126 @@ def save_session_db(conn, nmdb_path: Path, _db_path: Path = None) -> None:
         conn.commit()
         return
 
-    # Slow path: dump conn → plain tmp (same backup engine regardless of
-    # whether src is sqlite3 or sqlcipher3), then export plain → encrypted
-    # via SQLCipher ATTACH, atomic replace.
-    key = _get_key()
-    parent = nmdb_path.parent
-    parent.mkdir(parents=True, exist_ok=True)
-
-    plain_fd, plain_path = tempfile.mkstemp(suffix=".plain.tmp", dir=str(parent))
-    os.close(plain_fd)
-    os.unlink(plain_path)  # sqlite3.connect will create it
-
-    enc_fd, enc_path = tempfile.mkstemp(suffix=".nmdb.tmp", dir=str(parent))
-    os.close(enc_fd)
-    os.unlink(enc_path)
-
+    # Slow path: dump conn → plain tmp, then encrypt plain → atomic replace.
+    plain_path = snapshot_to_plain(conn, nmdb_path.parent)
     try:
-        # Step 1: dump caller's conn → plain tmp (sqlite3 backup; works whether
-        # conn is sqlite3.Connection or sqlcipher3 in-memory since backup only
-        # cares about the page layer, and :memory: has no key applied here).
-        plain_conn = sqlite3.connect(plain_path)
-        try:
-            conn.backup(plain_conn)
-        finally:
-            plain_conn.close()
-
-        # Step 2: plain tmp → encrypted tmp
-        _export_plain_to_encrypted(plain_path, enc_path, key)
-
-        # Step 3: atomic replace
-        os.replace(enc_path, str(nmdb_path))
+        encrypt_plain_atomic(plain_path, nmdb_path)
     finally:
-        for p in (plain_path, enc_path):
-            if os.path.exists(p):
+        if os.path.exists(plain_path):
+            try:
+                os.unlink(plain_path)
+            except Exception:
+                pass
+
+
+class AsyncSaver:
+    """Background-thread encrypted save coalescer.
+
+    The hot path (server's per-day callback) does the synchronous snapshot
+    (`snapshot_to_plain`, ~10s on a 1.5 GB DB) inline, then submits the
+    plain tmp file here. A single worker thread runs the slow encrypt step
+    (~90s) and atomically replaces the .nmdb.
+
+    Coalescing: if a newer plain file is submitted before the worker picks
+    up the previous one, the older plain is unlinked and only the newest
+    is encrypted. This bounds disk + work even if days arrive faster than
+    the encrypter can drain.
+    """
+
+    def __init__(self, nmdb_path: Union[str, Path], *, key: Optional[str] = None):
+        self._nmdb_path = Path(nmdb_path)
+        self._key = key or _get_key()
+        self._cond = threading.Condition()
+        self._pending: Optional[str] = None
+        self._busy: bool = False
+        self._shutdown: bool = False
+        self._thread = threading.Thread(
+            target=self._loop, daemon=True, name="AsyncSaver"
+        )
+        self._thread.start()
+
+    def submit(self, plain_path: Union[str, Path]) -> None:
+        """Queue a plain tmp file for encryption + atomic replace.
+
+        Coalesces: if there's already a pending plain, it gets unlinked
+        and replaced by this one. The worker is woken up.
+        """
+        plain_path = str(plain_path)
+        with self._cond:
+            if self._shutdown:
+                # Caller submitted after shutdown — clean up their tmp file
+                # rather than leak it.
                 try:
-                    os.unlink(p)
-                except Exception:
+                    if os.path.exists(plain_path):
+                        os.unlink(plain_path)
+                except OSError:
                     pass
+                return
+            if self._pending and self._pending != plain_path:
+                try:
+                    os.unlink(self._pending)
+                except OSError:
+                    pass
+            self._pending = plain_path
+            self._cond.notify()
+
+    def _loop(self) -> None:
+        while True:
+            with self._cond:
+                while self._pending is None and not self._shutdown:
+                    self._cond.wait()
+                if self._pending is None and self._shutdown:
+                    return
+                p = self._pending
+                self._pending = None
+                self._busy = True
+            try:
+                encrypt_plain_atomic(p, self._nmdb_path, key=self._key)
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+            finally:
+                try:
+                    if os.path.exists(p):
+                        os.unlink(p)
+                except OSError:
+                    pass
+                with self._cond:
+                    self._busy = False
+                    self._cond.notify_all()
+
+    def drain(self, timeout: Optional[float] = None) -> bool:
+        """Block until pending + busy are both clear.
+
+        Returns True if drained, False on timeout.
+        """
+        deadline = None if timeout is None else (time.monotonic() + timeout)
+        with self._cond:
+            while self._pending is not None or self._busy:
+                if deadline is None:
+                    self._cond.wait()
+                else:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return False
+                    self._cond.wait(timeout=remaining)
+            return True
+
+    def shutdown(
+        self, *, wait: bool = True, timeout: Optional[float] = None
+    ) -> bool:
+        """Drain pending work (if wait=True), then signal worker to exit.
+
+        Returns True if everything drained and the worker thread exited
+        cleanly within the timeout, False otherwise.
+        """
+        ok = True
+        if wait:
+            ok = self.drain(timeout=timeout)
+        with self._cond:
+            self._shutdown = True
+            self._cond.notify_all()
+        self._thread.join(timeout=timeout)
+        return ok and not self._thread.is_alive()
 
 
 def load_session_db(

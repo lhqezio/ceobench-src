@@ -15,8 +15,14 @@ zipimport. This blocker shuts that door at the interpreter level.
 `_public_cli` (the public CLI entrypoint inside the zipapp) is NOT
 blocked — `./novamind-operation` legitimately does `from _public_cli
 import main` to dispatch HTTP calls to the server.
+
+ORACLE MODE: when env var ORACLE_MODE=1, the blocker is NOT installed.
+This is the deliberate "white-box" oracle agent: simulator source is
+ro-bound at /data/saas-bench/src, the import blocker is off, and the
+agent is expected to inspect engine internals directly.
 """
 
+import os
 import sys
 
 
@@ -36,4 +42,5 @@ class _SaasBenchImportBlocker:
         return None
 
 
-sys.meta_path.insert(0, _SaasBenchImportBlocker())
+if os.environ.get("ORACLE_MODE") != "1":
+    sys.meta_path.insert(0, _SaasBenchImportBlocker())

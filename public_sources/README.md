@@ -23,7 +23,11 @@ bash install.sh
 ./novamind-operation new-session --days 365 --seed 42
 
 # 3. Advance to the first week (prints dashboard with metrics)
-./novamind-operation next-week
+#    next-week requires a rationale string + 12 cash forecasts (point + 95%% CI lower/upper at +7d/+28d/+84d/+182d).
+./novamind-operation next-week \
+    "Opening week: balanced spend, conservative pricing" \
+    1000000 950000 1050000   1000000 900000 1100000 \
+    1100000 800000 1500000   1300000 700000 2000000
 
 # 4. Make decisions using tools
 ./novamind-operation call set_prices --args '{"A": 25, "B": 69, "C": 179}'
@@ -32,7 +36,10 @@ bash install.sh
 ./novamind-operation call set_targeted_ad_spend --args '{"targeted_spend": {"linkedin": {"E1": 1500, "E2": 1000}, "search_ads": {"S1": 1500, "S2": 1000}}}'
 
 # 5. Advance to the next week and see results
-./novamind-operation next-week
+./novamind-operation next-week \
+    "Holding prices, raising linkedin spend on E1 to push enterprise pipeline" \
+    1050000 1000000 1100000  1200000 1050000 1400000 \
+    1800000 1400000 2300000  3000000 2000000 4500000
 
 # 6. Query the database for insights
 ./novamind-operation query "SELECT group_id, COUNT(*) as n FROM subscriptions WHERE status='active' GROUP BY group_id"

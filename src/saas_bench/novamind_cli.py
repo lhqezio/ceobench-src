@@ -26,17 +26,22 @@ def _get_workspace() -> Path:
 # =========================================================================
 
 def _cmd_next_week(args):
-    """Advance the simulator by one week (7 days) — REQUIRES cash predictions
-    at four horizons, each with point estimate + 95% CI bounds.
+    """Advance the simulator by one week (7 days) — REQUIRES a rationale string
+    plus cash predictions at four horizons, each with point estimate + 95% CI bounds.
 
     Usage:
         novamind-operation next-week \\
+            "<rationale>" \\
             <c1_pt> <c1_lo> <c1_hi>  \\
             <c4_pt> <c4_lo> <c4_hi>  \\
             <c12_pt> <c12_lo> <c12_hi>  \\
             <c26_pt> <c26_lo> <c26_hi>
 
-    Arguments (all required, all numeric, in dollars):
+    Arguments (all required):
+        rationale         Your strategic reasoning for this week's actions
+                          (non-empty quoted string). Replaces the old standalone
+                          log_rationale tool. Recorded for analysis but does
+                          not affect scoring.
         cash_1wk_point    Point estimate of cash 1 week from today (+7 days).
         cash_1wk_lower    95% CI lower bound for the +7-day forecast.
         cash_1wk_upper    95% CI upper bound for the +7-day forecast.
@@ -51,7 +56,8 @@ def _cmd_next_week(args):
         cash_26wk_upper   95% CI upper bound for +182 days.
 
     Constraints (per horizon): ``lower <= point <= upper``. The server
-    returns 400 if violated or if any field is missing/non-numeric.
+    returns 400 if violated or if any field is missing/non-numeric, or if
+    rationale is missing or empty.
 
     Predictions are recorded at submission time and scored on percent error
     `(point - actual) / actual` once actual cash is known. CI bounds are
@@ -66,9 +72,13 @@ def _cmd_next_week(args):
     **NOTE:** The next_week call may take several minutes at large subscriber
     counts. This is normal — just wait for the response.
 
-    Exit code 0 on success, 1 on failure (including missing predictions).
+    Exit code 0 on success, 1 on failure (including missing rationale or predictions).
     """
     from .novamind_api._client import next_week
+    rationale = (args.rationale or "").strip()
+    if not rationale:
+        print("Error: rationale is required and must be a non-empty string.", file=sys.stderr)
+        sys.exit(1)
     predictions = {
         "cash_1wk":  {"point": float(args.cash_1wk_point),  "lower": float(args.cash_1wk_lower),  "upper": float(args.cash_1wk_upper)},
         "cash_4wk":  {"point": float(args.cash_4wk_point),  "lower": float(args.cash_4wk_lower),  "upper": float(args.cash_4wk_upper)},
@@ -76,7 +86,7 @@ def _cmd_next_week(args):
         "cash_26wk": {"point": float(args.cash_26wk_point), "lower": float(args.cash_26wk_lower), "upper": float(args.cash_26wk_upper)},
     }
     try:
-        result = next_week(predictions=predictions)
+        result = next_week(predictions=predictions, rationale=rationale)
         dashboard = result.get('dashboard', '')
         print(dashboard)
     except Exception as e:
@@ -89,11 +99,12 @@ def operation_main():
 
     Commands:
         next-week   Advance the simulation by one week (7 days).
-                    REQUIRES 12 numeric args: for each of 4 horizons
+                    REQUIRES 13 args: a rationale string + for each of 4 horizons
                     (+7d, +28d, +84d, +182d), submit point + 95% CI low/high.
 
     Example:
         ./novamind-operation next-week \\
+            "Holding prices, raising linkedin spend on E1" \\
             1050000 1000000 1100000 \\
             1200000 1050000 1400000 \\
             1800000 1400000 2300000 \\
@@ -107,8 +118,9 @@ def operation_main():
 
     sub_next = subparsers.add_parser(
         'next-week',
-        help='Advance by 7 days. Requires 12 cash forecasts: point + 95%% CI low/high at +7d/+28d/+84d/+182d.',
+        help='Advance by 7 days. Requires a rationale string + 12 cash forecasts (point + 95%% CI low/high at +7d/+28d/+84d/+182d).',
     )
+    sub_next.add_argument('rationale', type=str, help='Your strategic reasoning for this week\'s actions (non-empty)')
     sub_next.add_argument('cash_1wk_point',  type=float, help='Point estimate of cash +7 days')
     sub_next.add_argument('cash_1wk_lower',  type=float, help='95%% CI lower bound, +7 days')
     sub_next.add_argument('cash_1wk_upper',  type=float, help='95%% CI upper bound, +7 days')

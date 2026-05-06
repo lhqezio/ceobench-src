@@ -85,7 +85,9 @@ class BashAgentRunner:
         self.provider = provider
         self.seed = seed
         self.scenario = scenario
-        self.total_days = total_days
+        # Round down to nearest full week so the simulation always ends on a
+        # week boundary (no partial trailing week). e.g. 500 -> 497.
+        self.total_days = (total_days // 7) * 7
         self.initial_cash = initial_cash
         self.reasoning_effort = reasoning_effort
         self.continue_from = continue_from
@@ -392,6 +394,23 @@ __pycache__/
         else:
             self._git("commit", "-q", "-m", message)
 
+    def _commit_weeks_up_to(self, sim_day: int):
+        # Agent advances time via `./novamind-operation next-week ...`, which can cross
+        # one or more sim-week boundaries inside a single harness loop iteration. The
+        # once_key dedupe makes this safe to call after every sim_day update.
+        if sim_day <= 0:
+            return
+        if not hasattr(self, '_last_committed_week'):
+            self._last_committed_week = 0
+        target_week = sim_day // 7
+        while self._last_committed_week < target_week:
+            self._last_committed_week += 1
+            wd = self._last_committed_week * 7
+            self._git_commit_workspace(
+                f"Week {self._last_committed_week} (day {wd})",
+                once_key=f"week-{self._last_committed_week}",
+            )
+
     def _initialize_from_public_repo(self):
         """Copy the published layout into the agent workspace and create a session.
 
@@ -508,6 +527,12 @@ __pycache__/
         zipapp_path = self._public_dir() / "novamind-operation"
         server_env = os.environ.copy()
         server_env["NOVAMIND_SERVER_MODE"] = "1"
+        # Route api_server stderr to a file rather than a pipe back to bash_agent.
+        # bash_agent never drains the pipe during a /call, so a single buffered
+        # traceback (>64KB pipe capacity) wedges write() under self._lock and
+        # deadlocks every subsequent /call. (run 27c000a5 d105 hang.)
+        self._server_stderr_path = self.logs_dir / "api_server_stderr.log"
+        self._server_stderr_file = open(self._server_stderr_path, "ab", buffering=0)
         self._server_proc = subprocess.Popen(
             [
                 sys.executable, str(zipapp_path),
@@ -516,15 +541,18 @@ __pycache__/
                 "--session", self._session_id,
             ],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=self._server_stderr_file,
             env=server_env,
         )
 
         # Read first line of stdout to get port info
         first_line = self._server_proc.stdout.readline()
         if not first_line:
-            stderr = self._server_proc.stderr.read()
-            raise RuntimeError(f"Server failed to start:\n{stderr.decode()}")
+            try:
+                stderr_tail = self._server_stderr_path.read_bytes()[-4096:]
+            except Exception:
+                stderr_tail = b"<stderr log unavailable>"
+            raise RuntimeError(f"Server failed to start:\n{stderr_tail.decode(errors='replace')}")
 
         server_info = json.loads(first_line)
         self._server_port = server_info["port"]
@@ -549,6 +577,13 @@ __pycache__/
             except subprocess.TimeoutExpired:
                 self._server_proc.kill()
             self._server_proc = None
+        f = getattr(self, "_server_stderr_file", None)
+        if f is not None:
+            try:
+                f.close()
+            except Exception:
+                pass
+            self._server_stderr_file = None
 
     # =========================================================================
     # Checkpoint
@@ -1023,6 +1058,7 @@ __pycache__/
                 # Check server for timeout (via game-status)
                 status = self._get_game_status()
                 sim_day = status.get('day', sim_day)  # Update sim_day after potential next-week
+                self._commit_weeks_up_to(sim_day)  # Commit any sim-week boundary just crossed
 
                 # Check if simulation reached total_days (inside inner loop)
                 if sim_day >= self.total_days:
@@ -1083,6 +1119,7 @@ __pycache__/
             # Get post-day status (also refresh sim_day)
             status = self._get_game_status()
             sim_day = status.get('day', sim_day)
+            self._commit_weeks_up_to(sim_day)  # Commit any sim-week boundary crossed by step_day
             _subs = status.get('subscribers', 0)
             _cash = status.get('cash', 0)
 
@@ -1137,9 +1174,8 @@ __pycache__/
                 print(f"  📊 End of day: Cash=${_cash:,.0f}, Subs={_subs}")
 
             # Weekly git commit of agent workspace (before checkpoint so resume re-tries)
-            if sim_day > 0 and sim_day % 7 == 0:
-                week_num = sim_day // 7
-                self._git_commit_workspace(f"Week {week_num} (day {sim_day})", once_key=f"week-{week_num}")
+            # Idempotent via once_key — _commit_weeks_up_to may have already committed this week.
+            self._commit_weeks_up_to(sim_day)
 
             # Save checkpoint (use actual sim day, not harness loop counter)
             self._save_checkpoint(sim_day)

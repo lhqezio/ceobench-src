@@ -164,15 +164,9 @@ You can call any tool infinitely within a week. Call `next_week` to proceed to t
 
 | Tool | Description |
 |------|-------------|
-| `next_week` | Advance the simulation by one week (7 days) and receive the weekly dashboard |
+| `next_week` | Advance the simulation by one week (7 days). Requires a `rationale` string capturing your strategic reasoning for this week's actions. |
 
-### Thinking & Reasoning
-
-| Tool | Description |
-|------|-------------|
-| `log_rationale` | Log your thinking, reasoning, and decision rationale. Use this to record why you made decisions. |
-
-**CRITICAL REQUIREMENT:** You MUST call `log_rationale` at least once EVERY SINGLE WEEK before calling `next_week`. This is mandatory for tracking your decision-making process.
+**CRITICAL REQUIREMENT:** Every `next_week` call MUST include a non-empty `rationale` string. The standalone `log_rationale` tool has been removed — rationale is now a required argument of `next_week`.
 """
 
 

@@ -7,6 +7,7 @@ Supports OpenAI-compatible APIs (OpenAI, xAI) and Anthropic APIs (direct, Bedroc
 """
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -106,6 +107,12 @@ class BashAgent(BaseAgent):
 
         Loads the bash_agent system_prompt.md and fills in
         {simulator_instructions} and {total_days}.
+
+        ORACLE MODE: when env var ORACLE_MODE=1, prepend system_prompt_oracle.md
+        as a preamble. The oracle preamble explicitly overrides the "hidden
+        column / not accessible" caveats in the standard prompt, lists the
+        hidden tables and customer_state columns, and points the agent at the
+        read-only simulator source tree under /data/saas-bench/src.
         """
         base_dir = Path(__file__).parent
 
@@ -129,6 +136,13 @@ class BashAgent(BaseAgent):
         years_str = f"{total_years:.0f}" if total_years == int(total_years) else f"{total_years:.1f}"
         prompt = prompt.replace('{total_days}', str(self.total_days))
         prompt = prompt.replace('{total_years}', years_str)
+
+        if os.environ.get("ORACLE_MODE") == "1":
+            oracle_file = base_dir / "system_prompt_oracle.md"
+            if oracle_file.exists():
+                with open(oracle_file, 'r') as f:
+                    oracle_preamble = f.read()
+                prompt = oracle_preamble + "\n\n" + prompt
         return prompt
 
     def _get_system_prompt_with_memory(self) -> str:
@@ -810,8 +824,12 @@ class BashAgent(BaseAgent):
         # for max_tokens > 64000.
         use_streaming = api_kwargs['max_tokens'] > 64000
         if self.reasoning_effort and self.reasoning_effort in _VALID_EFFORTS:
-            api_kwargs['thinking'] = {'type': 'adaptive'}
-            api_kwargs['output_config'] = {'effort': self.reasoning_effort}
+            if 'haiku' in self.model.lower():
+                _BUDGET_BY_EFFORT = {'low': 4096, 'medium': 16000, 'high': 32000, 'xhigh': 48000, 'max': 64000}
+                api_kwargs['thinking'] = {'type': 'enabled', 'budget_tokens': _BUDGET_BY_EFFORT[self.reasoning_effort]}
+            else:
+                api_kwargs['thinking'] = {'type': 'adaptive'}
+                api_kwargs['output_config'] = {'effort': self.reasoning_effort}
             use_streaming = True
 
         try:

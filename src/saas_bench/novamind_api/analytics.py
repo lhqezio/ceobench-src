@@ -41,17 +41,3 @@ def set_targeted_dev_spend(targeted_spend: Dict[str, float]) -> Dict:
         Dict with update confirmation.
     """
     return _client.call('set_targeted_dev_spend', {'targeted_spend': targeted_spend})
-
-
-def log_rationale(rationale: str) -> Dict:
-    """Log your strategic rationale for the week.
-
-    MUST be called exactly once per week, before next-week.
-
-    Args:
-        rationale: Your analysis, strategy, and reasoning.
-
-    Returns:
-        Dict with logging confirmation.
-    """
-    return _client.call('log_rationale', {'rationale': rationale})

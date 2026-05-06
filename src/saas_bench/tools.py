@@ -1063,9 +1063,21 @@ TOOL_DOCS = {
     "next_week": {
         "name": "next_week",
         "category": "Simulation Control",
-        "description": "Advance the simulation by one week (7 days) and receive the weekly dashboard.",
-        "inputSchema": {"type": "object", "properties": {}},
-        "parameters": {},
+        "description": "Advance the simulation by one week (7 days) and receive the weekly dashboard. Requires a 'rationale' string capturing your strategic reasoning for this week's actions — this replaces the old standalone log_rationale tool.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "rationale": {
+                    "type": "string",
+                    "description": "Your strategic reasoning for this week's actions. Required. Must be a non-empty string. Stored as the agent_action with tool_name='log_rationale' for analysis.",
+                    "minLength": 1
+                }
+            },
+            "required": ["rationale"]
+        },
+        "parameters": {
+            "rationale": {"type": "str", "description": "Your strategic reasoning for this week's actions (required, non-empty)."}
+        },
         "returns": {
             "dashboard_example": "=== Week 7 Dashboard (Day 49) ===\n\nCash: $229,926\nIndividual Subscribers: 12483\nEnterprise Subscribed Seats: 8880\nOpen Issues: 5846\n\n--- This Week's Metrics ---\nUsage: 8,906,662 units\nNew Individual Leads: 6832 | New Enterprise Leads: 66\nNew Individual Subscribers: 3693 | New Enterprise Subscribed Seats: 5845\nCancellations: 111\nUpgrades: 1 | Downgrades: 0\nOverload: None\nOutage: No\nP95 Latency (peak): 203ms | Error Rate (peak): 0.45%\n\n--- Current Config ---\nPrices: A=$22, B=$85, C=$165\nModel Tiers: A=2, B=4, C=5\nQuotas: A=5000, B=10000, C=50000 units/day\nCapacity: Tier 3\nDaily Spend: Ads=$600, Ops=$2500, Dev=$1200\n\n--- Delivered Quality (base=0.20, global_bonus=0.2292) ---\nGroup    Plan A (T2)    Plan B (T4)    Plan C (T5)    Grp Bonus \nS1       0.3405         0.4540         0.4995         +0.0249   \nE1       0.3427         0.4569         0.5026         +0.0277   \n\n--- Inbox ---\n  • 📨 68 new enterprise leads this week (37,541 total seats)\n  • ✉️ 23 new enterprise replies this week\n  • ⏳ 5 enterprise threads awaiting your response",
             "game_over": "GAME OVER - BANKRUPT! (when cash < 0)",
@@ -1092,16 +1104,17 @@ TOOL_DOCS = {
         "impact": "This is the main action that advances time by one week. All configuration changes take effect when next_week is called.",
         "example_call": {
             "tool": "next_week",
-            "arguments": {}
+            "arguments": {"rationale": "Week 3: Revenue growing steadily. Increased ad spend to $500 to accelerate growth while margins are healthy. Watching churn rate — if it exceeds 5% will reduce prices."}
         },
         "internal_notes": "Internally calls step_day() 7 times. Customer social media posts only generated on day 7. Reputation updates run daily. Snapshot metrics (cash, subs) are end-of-week values. Service metrics show peak (worst) values across the week.",
         "sample_io": {
             "success": [
-                {"label": "Normal week", "input": {}, "output": "=== Week 7 Dashboard (Day 49) ===\n\nCash: $229,926\nIndividual Subscribers: 12483\nEnterprise Subscribed Seats: 8880\nOpen Issues: 5846\n\n--- This Week's Metrics ---\nUsage: 8,906,662 units\nNew Individual Leads: 6832 | New Enterprise Leads: 66\nNew Individual Subscribers: 3693 | New Enterprise Subscribed Seats: 5845\nCancellations: 111\nUpgrades: 1 | Downgrades: 0\nOverload: None\nOutage: No\nP95 Latency (peak): 203ms | Error Rate (peak): 0.45%\n\n--- Current Config ---\nPrices: A=$22, B=$85, C=$165\nModel Tiers: A=2, B=4, C=5\nQuotas: A=5000, B=10000, C=50000 units/day\nCapacity: Tier 3\nDaily Spend: Ads=$600, Ops=$2500, Dev=$1200\n\n--- Delivered Quality (base=0.20, global_bonus=0.2292) ---\nGroup    Plan A (T2)    Plan B (T4)    Plan C (T5)    Grp Bonus \nS1       0.3405         0.4540         0.4995         +0.0249   \nE1       0.3427         0.4569         0.5026         +0.0277   \n\n--- Inbox ---\n  • 📨 68 new enterprise leads this week (37,541 total seats)\n  • ✉️ 23 new enterprise replies this week"}
+                {"label": "Normal week", "input": {"rationale": "Week 7: Subs growing. Holding prices, expanding capacity to absorb load."}, "output": "=== Week 7 Dashboard (Day 49) ===\n\nCash: $229,926\nIndividual Subscribers: 12483\nEnterprise Subscribed Seats: 8880\nOpen Issues: 5846\n\n--- This Week's Metrics ---\nUsage: 8,906,662 units\nNew Individual Leads: 6832 | New Enterprise Leads: 66\nNew Individual Subscribers: 3693 | New Enterprise Subscribed Seats: 5845\nCancellations: 111\nUpgrades: 1 | Downgrades: 0\nOverload: None\nOutage: No\nP95 Latency (peak): 203ms | Error Rate (peak): 0.45%\n\n--- Current Config ---\nPrices: A=$22, B=$85, C=$165\nModel Tiers: A=2, B=4, C=5\nQuotas: A=5000, B=10000, C=50000 units/day\nCapacity: Tier 3\nDaily Spend: Ads=$600, Ops=$2500, Dev=$1200\n\n--- Delivered Quality (base=0.20, global_bonus=0.2292) ---\nGroup    Plan A (T2)    Plan B (T4)    Plan C (T5)    Grp Bonus \nS1       0.3405         0.4540         0.4995         +0.0249   \nE1       0.3427         0.4569         0.5026         +0.0277   \n\n--- Inbox ---\n  • 📨 68 new enterprise leads this week (37,541 total seats)\n  • ✉️ 23 new enterprise replies this week"}
             ],
             "failure": [
-                {"label": "Bankruptcy", "input": {}, "output": "GAME OVER — BANKRUPT! Cash dropped below $0.\n\nFinal stats: 145 subscribers, $-1,234 cash.\n"},
-                {"label": "Simulation complete", "input": {}, "output": "SIMULATION COMPLETE! Final day reached.\n\nFinal stats: 12,000 subscribers, $8,500,000 cash."}
+                {"label": "Missing rationale", "input": {}, "output": "Error: 'rationale' is required and must be a non-empty string."},
+                {"label": "Bankruptcy", "input": {"rationale": "Last-ditch ad blitz."}, "output": "GAME OVER — BANKRUPT! Cash dropped below $0.\n\nFinal stats: 145 subscribers, $-1,234 cash.\n"},
+                {"label": "Simulation complete", "input": {"rationale": "Final week — coasting on subscription revenue."}, "output": "SIMULATION COMPLETE! Final day reached.\n\nFinal stats: 12,000 subscribers, $8,500,000 cash."}
             ]
         }
     },
@@ -1545,42 +1558,6 @@ TOOL_DOCS = {
             ],
             "failure": [
                 {"label": "Unknown tool", "input": {"tool_names": ["nonexistent"]}, "output": "No matching tools found. Requested: ['nonexistent']\nAvailable tools: set_prices, set_model_tiers, ..."}
-            ]
-        }
-    },
-
-    "log_rationale": {
-        "name": "log_rationale",
-        "category": "Session Management",
-        "description": "Log your thinking, rationale, or reasoning for decisions. MUST be called EXACTLY ONCE per week, immediately before calling next_week.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "rationale": {"type": "string", "description": "Your thinking, reasoning, and decision rationale"},
-                "context": {"type": "string", "description": "Optional additional context"}
-            },
-            "required": ["rationale"]
-        },
-        "parameters": {
-            "rationale": {"type": "str", "description": "Your thinking, reasoning, and decision rationale for this week's actions"},
-            "context": {"type": "str", "description": "Optional additional context (e.g., key metrics snapshot)"}
-        },
-        "returns": {
-            "success": "Rationale logged: [first 100 chars]...",
-            "failure": "Missing rationale text"
-        },
-        "output_schema": {
-            "logged": "bool — always True on success",
-            "_access": "result['logged'] → True"
-        },
-        "impact": "Records your decision-making process. MANDATORY — must be called exactly once per week before next_week.",
-        "example_call": {
-            "tool": "log_rationale",
-            "arguments": {"rationale": "Week 3: Revenue growing steadily. Increased ad spend to $500 to accelerate growth while margins are healthy. Watching churn rate — if it exceeds 5% will reduce prices."},
-        },
-        "sample_io": {
-            "success": [
-                {"label": "Weekly rationale", "input": {"rationale": "Week 3: Revenue growing steadily. Increased ad spend to accelerate growth."}, "output": "Rationale logged: Week 3: Revenue growing steadily. Increased ad spend to accelerate growth...."}
             ]
         }
     },
@@ -5034,24 +5011,6 @@ os.chdir('{self.workspace_path}')
             message += f"\n\nNot found: {not_found}"
 
         return ToolResult(True, message, result_docs)
-
-    def log_rationale(self, rationale: str) -> ToolResult:
-        """Log the agent's strategic rationale for the current day.
-
-        Args:
-            rationale: The agent's analysis, strategy, and reasoning.
-
-        Returns:
-            ToolResult confirming the rationale was logged.
-        """
-        if self.event_logger:
-            self.event_logger.log_agent_action(
-                tool_name='log_rationale',
-                arguments={'rationale': rationale},
-                result={'logged': True},
-                success=True
-            )
-        return ToolResult(True, f"Rationale logged.", {'logged': True})
 
 
 def _format_sample_io(sample_io: Dict[str, Any]) -> str:

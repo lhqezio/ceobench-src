@@ -42,8 +42,12 @@ result = nm.query("SELECT SUM(amount) as cash FROM ledger")
 cash = result['rows'][0]['cash'] if result['rows'] and result['rows'][0]['cash'] else 0
 print(f"💰 Cash: ${cash:,.0f}")
 
-# Log rationale (required once per week before next-week)
-nm.analytics.log_rationale(
-    f"Day {nm.vars.current_day}: Basic strategy — moderate pricing, balanced spending."
-)
-print("\n✅ Rationale logged. Ready for next-week.")
+# Rationale is now a required argument of `next-week` itself — no separate
+# log_rationale call. After running this script, advance the week with:
+#
+#   ./novamind-operation next-week \
+#       "Day N: Basic strategy — moderate pricing, balanced spending." \
+#       <12 cash forecasts>
+#
+# See docs/cli.md for the full forecast schema.
+print("\n✅ Strategy applied. Pass a rationale + 12 forecasts to ./novamind-operation next-week to advance.")

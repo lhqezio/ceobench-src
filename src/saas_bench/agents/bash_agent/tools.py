@@ -224,6 +224,8 @@ class BashAgentToolExecutor:
             return f"Error: Unknown tool '{tool_name}'"
         try:
             return handler(args)
+        except NextDayTimeoutError:
+            raise
         except Exception as e:
             return f"Error: {e}"
 
@@ -329,6 +331,23 @@ class BashAgentToolExecutor:
                 f"{sandbox_init_guest}:{existing_pp}" if existing_pp else sandbox_init_guest
             )
 
+        # ORACLE MODE: ro-bind the simulator source tree so the agent can
+        # read config.py, simulation.py, engine internals, and `import saas_bench`
+        # works (the meta-path blocker in sitecustomize.py is also skipped when
+        # ORACLE_MODE=1, see _sandbox_init/sitecustomize.py).
+        if env.get('ORACLE_MODE') == '1':
+            oracle_src_default = "/data/saas-bench/src"
+            oracle_src = env.get('ORACLE_SOURCE_DIR', oracle_src_default)
+            if os.path.isdir(oracle_src):
+                cmd.extend(['--ro-bind', oracle_src, oracle_src])
+                # Make sure the agent's editable install resolves: prepend the
+                # source dir to PYTHONPATH so `import saas_bench` finds the
+                # source even if the venv .pth file is missing.
+                existing_pp = env.get('PYTHONPATH', '')
+                env['PYTHONPATH'] = (
+                    f"{oracle_src}:{existing_pp}" if existing_pp else oracle_src
+                )
+
         # The agent workspace — ONLY writable directory
         cmd.extend(['--bind', ws, ws])
 
@@ -425,6 +444,23 @@ class BashAgentToolExecutor:
             # Truncate very long output (same limit as Claude Code: 30K chars)
             if len(output) > 30000:
                 output = output[:15000] + "\n\n... (output truncated — exceeded 30,000 character limit) ...\n\n" + output[-15000:]
+
+            # Engine-level next-week timeout: api_server's STEP_WEEK_TIMEOUT
+            # fired (step_week didn't return within ~70min). The bash command
+            # exits cleanly with returncode=1 and "step_week_timeout" in
+            # stderr — the bash subprocess didn't hang, the engine did. Raise
+            # NextDayTimeoutError so the harness ends the run instead of
+            # letting the agent retry into a wedged engine.
+            if (
+                './novamind-operation next-week' in command
+                and proc.returncode != 0
+                and ('step_week_timeout' in output or 'step_day_timeout' in output)
+            ):
+                raise NextDayTimeoutError(
+                    "next_week engine-side timeout (step_week_timeout)",
+                    partial_stdout=stdout or "",
+                    partial_stderr=stderr or "",
+                )
 
             return output
 

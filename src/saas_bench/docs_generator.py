@@ -51,7 +51,6 @@ _TOOL_TO_MODULE = {
     'get_social_posts': 'analytics',
     'set_targeted_ops_spend': 'analytics',
     'set_targeted_dev_spend': 'analytics',
-    'log_rationale': 'analytics',
     'post_social_media': 'marketing',
 }
 

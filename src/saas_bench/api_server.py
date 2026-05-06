@@ -6,6 +6,7 @@ is via HTTP on localhost with a random OS-assigned port.
 """
 
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -14,6 +15,13 @@ import traceback
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional, Set
+
+# Oracle mode: when set, all hidden-table/column/schema filters are bypassed
+# so the agent can see internal simulation state (latent customer params,
+# competitor events, hidden snapshots, etc.). Default = OFF; only set this
+# env var for an oracle benchmark run. Normal benchmark runs MUST leave it
+# unset so the hide-policy stays enforced.
+_ORACLE_MODE: bool = os.environ.get("ORACLE_MODE") == "1"
 
 from .tools import AgentTools, ToolResult
 from .database import TABLE_DOCS
@@ -40,6 +48,7 @@ _HIDDEN_TABLES: Set[str] = {
     'pending_group_research', # Internal async research tracking
     'group_parameters',       # V2.1: Internal preference drift tracking
     'competitor_events',      # V4: Hidden — agent should not see internal competitor boost mechanics
+    '_hidden_leads_per_1k_snapshot',  # v3.4ai: monthly leads_per_1000_dollars snapshot (engine-only)
 }
 
 _HIDDEN_COLUMNS: Set[str] = {
@@ -416,17 +425,29 @@ class _APIHandler(BaseHTTPRequestHandler):
     def _handle_next_week(self):
         """Handle next-week advancement: POST /next-week.
 
-        Body must contain ``predictions`` with one entry per horizon
-        (``cash_1wk``, ``cash_4wk``, ``cash_12wk``, ``cash_26wk`` for
-        +7/+28/+84/+182 days). Each entry must be an object with three
-        numeric fields: ``point``, ``lower``, ``upper`` — the agent's point
-        estimate plus the 95% CI lower and upper bounds. Missing keys,
-        non-numeric values, or ``lower > upper`` / ``point`` outside
-        ``[lower, upper]`` return 400.
+        Body must contain:
+        - ``rationale`` (string, non-empty): the agent's strategic reasoning
+          for this week's actions. Replaces the old standalone log_rationale
+          tool. Stored via event_logger as tool_name='log_rationale'.
+        - ``predictions`` with one entry per horizon
+          (``cash_1wk``, ``cash_4wk``, ``cash_12wk``, ``cash_26wk`` for
+          +7/+28/+84/+182 days). Each entry must be an object with three
+          numeric fields: ``point``, ``lower``, ``upper`` — the agent's point
+          estimate plus the 95% CI lower and upper bounds.
+
+        Missing/empty rationale, missing prediction keys, non-numeric values,
+        or ``lower > upper`` / ``point`` outside ``[lower, upper]`` return 400.
         """
         try:
             server: NovaMindAPIServer = self.server._api_server
             body = self._read_body() or {}
+            rationale = body.get("rationale")
+            if not isinstance(rationale, str) or not rationale.strip():
+                self._send_json({
+                    "success": False,
+                    "error": "Missing 'rationale'. Required: a non-empty string capturing your strategic reasoning for this week's actions.",
+                }, 400)
+                return
             preds_raw = body.get("predictions")
             horizon_map = {"cash_1wk": 7, "cash_4wk": 28, "cash_12wk": 84, "cash_26wk": 182}
             required_keys = ", ".join(horizon_map.keys())
@@ -482,7 +503,7 @@ class _APIHandler(BaseHTTPRequestHandler):
                     return
                 parsed[horizon] = {"cash": {"point": point, "lower": lower, "upper": upper}}
 
-            result = server.advance_week(predictions=parsed)
+            result = server.advance_week(predictions=parsed, rationale=rationale)
             self._send_json(result)
         except Exception as e:
             self._send_internal_error(e, op="next-week")
@@ -500,22 +521,23 @@ class _APIHandler(BaseHTTPRequestHandler):
                 self._send_json({"success": False, "error": "No SQL query provided"}, 400)
                 return
 
-            # Block schema introspection
-            if _is_schema_query(sql):
+            # Block schema introspection (bypassed in oracle mode)
+            if not _ORACLE_MODE and _is_schema_query(sql):
                 self._send_json({
                     "success": False,
                     "error": "Schema introspection queries (PRAGMA, sqlite_master) are not allowed. Read docs/tables/ for table schemas.",
                 }, 403)
                 return
 
-            # Block hidden tables
-            hidden_table = _references_hidden_table(sql)
-            if hidden_table:
-                self._send_json({
-                    "success": False,
-                    "error": f"Table '{hidden_table}' is not accessible.",
-                }, 403)
-                return
+            # Block hidden tables (bypassed in oracle mode)
+            if not _ORACLE_MODE:
+                hidden_table = _references_hidden_table(sql)
+                if hidden_table:
+                    self._send_json({
+                        "success": False,
+                        "error": f"Table '{hidden_table}' is not accessible.",
+                    }, 403)
+                    return
 
             # Block writes
             sql_lower = sql.lower().lstrip()
@@ -533,20 +555,28 @@ class _APIHandler(BaseHTTPRequestHandler):
             _QUERY_ROW_LIMIT = 5000
 
             server: NovaMindAPIServer = self.server._api_server
+            import time as _qt_time
             with server._lock:
-                cursor = server.conn.execute(sql)
-                columns = [desc[0] for desc in cursor.description] if cursor.description else []
-                # Fetch up to limit+1 rows to detect overflow
-                rows_raw = cursor.fetchmany(_QUERY_ROW_LIMIT + 1)
+                server._query_deadline = _qt_time.monotonic() + server.QUERY_TIMEOUT_SECONDS
+                try:
+                    cursor = server.conn.execute(sql)
+                    columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                    # Fetch up to limit+1 rows to detect overflow
+                    rows_raw = cursor.fetchmany(_QUERY_ROW_LIMIT + 1)
+                finally:
+                    server._query_deadline = 0.0
                 truncated = len(rows_raw) > _QUERY_ROW_LIMIT
                 if truncated:
                     rows_raw = rows_raw[:_QUERY_ROW_LIMIT]
                 rows = [dict(row) for row in rows_raw]
 
-            # Strip hidden columns from results
-            hidden = _get_effective_hidden(sql)
-            if rows and columns:
-                rows = _strip_hidden_columns(rows, columns, sql)
+            # Strip hidden columns from results (bypassed in oracle mode)
+            if _ORACLE_MODE:
+                hidden = set()
+            else:
+                hidden = _get_effective_hidden(sql)
+                if rows and columns:
+                    rows = _strip_hidden_columns(rows, columns, sql)
 
             response = {
                 "success": True,
@@ -570,6 +600,22 @@ class _APIHandler(BaseHTTPRequestHandler):
 
             self._send_json(response)
 
+        except sqlite3.OperationalError as e:
+            # Server-side query deadline (set_progress_handler) was hit.
+            # Surface a concrete, recoverable message so the agent can narrow
+            # the query instead of retrying the same expensive SQL.
+            if "interrupt" in str(e).lower():
+                self._send_json({
+                    "success": False,
+                    "error": (
+                        f"Query exceeded {NovaMindAPIServer.QUERY_TIMEOUT_SECONDS}s "
+                        f"server-side limit and was aborted. Add a LIMIT, narrow "
+                        f"the WHERE clause, or use COUNT/aggregation instead of "
+                        f"a full scan."
+                    ),
+                }, 504)
+            else:
+                self._send_json({"success": False, "error": _get_helpful_query_error(e, sql)}, 500)
         except sqlite3.Error as e:
             # SQL errors are deliberately surfaced to the agent (the helper
             # rewrites them into typed hints — no source paths or tracebacks).
@@ -673,7 +719,6 @@ _TOOL_DISPATCH = {
     'get_social_posts': lambda tools, args: tools.get_social_posts(args.get('days', 7), args.get('limit', 50)),
     'post_social_media': lambda tools, args: tools.post_social_media(args.get('content', ''), args.get('reply_to_post_id')),
     'get_cost_info': lambda tools, args: tools.get_cost_info(),
-    'log_rationale': lambda tools, args: tools.log_rationale(args.get('rationale', args.get('text', ''))),
     'start_research_project': lambda tools, args: tools.start_research_project(args.get('tier', args.get('project_id', ''))),
     'list_research_projects': lambda tools, args: tools.list_research_projects(),
     'research_market': lambda tools, args: tools.research_market(),
@@ -743,6 +788,25 @@ class NovaMindAPIServer:
         self._daily_scripts: Dict[str, str] = {}  # name -> content snapshot
         self._step_day_timed_out: bool = False  # Set when step_day exceeds timeout
 
+        # Per-query wall-clock deadline (monotonic seconds; 0 = disabled).
+        # Set inside _handle_query before cursor.execute, cleared in finally.
+        # The progress handler below reads this and aborts the SQL when exceeded
+        # so a killed HTTP client cannot leak server._lock for the full SQL
+        # duration (run 15c3d364 wedge, 2026-05-01).
+        self._query_deadline: float = 0.0
+        if self.conn is not None:
+            import time as _qd_time
+            def _query_watchdog():
+                dl = self._query_deadline
+                if dl and _qd_time.monotonic() > dl:
+                    return 1  # non-zero => sqlite3 raises OperationalError("interrupted")
+                return 0
+            try:
+                self.conn.set_progress_handler(_query_watchdog, 100000)
+            except Exception:
+                # Best-effort: some sqlite builds may not support it.
+                pass
+
     def start(self):
         """Start the HTTP server in a background thread."""
         self._httpd = ThreadingHTTPServer(('127.0.0.1', 0), _APIHandler)
@@ -768,7 +832,13 @@ class NovaMindAPIServer:
     # Maximum allowed time for step_week before auto-quit (seconds)
     STEP_WEEK_TIMEOUT = 4200  # 7× longer than old per-day timeout
 
-    def advance_week(self, predictions: Optional[Dict[int, Dict[str, float]]] = None) -> Dict[str, Any]:
+    # Hard server-side deadline for a single /query SQL execution. If exceeded,
+    # the query is interrupted via the progress handler and server._lock is
+    # released, so a stuck SQL can no longer wedge next-week (line 549 wedge).
+    QUERY_TIMEOUT_SECONDS = 120
+
+    def advance_week(self, predictions: Optional[Dict[int, Dict[str, float]]] = None,
+                     rationale: Optional[str] = None) -> Dict[str, Any]:
         """Advance the simulator by one week (7 days) and return the dashboard.
 
         Enforces a hard timeout (STEP_WEEK_TIMEOUT seconds) on step_week().
@@ -780,6 +850,11 @@ class NovaMindAPIServer:
         ``predictions`` (optional): maps horizon_days -> {metric: value}. Saved
         to the ``predictions`` table before advancing. Used by the prediction
         benchmark component.
+
+        ``rationale`` (optional at the Python level, required at the HTTP layer
+        — see _handle_next_week): the agent's strategic reasoning for this
+        week's actions. Logged via event_logger with tool_name='log_rationale'
+        for analysis (preserves the old standalone log_rationale storage shape).
         """
         import time as _time
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -789,17 +864,36 @@ class NovaMindAPIServer:
                 return {"success": False, "error": "No simulator configured"}
             old_day = self.tools.current_day
 
+        # Log rationale BEFORE stepping so it's attributed to the day the
+        # decisions were made, not the post-step day.
+        if rationale and self.event_logger:
+            try:
+                self.event_logger.log_agent_action(
+                    tool_name='log_rationale',
+                    arguments={'rationale': rationale},
+                    result={'logged': True},
+                    success=True,
+                )
+            except Exception:
+                import traceback
+                print(traceback.format_exc(), file=sys.stderr, flush=True)
+
         # Persist predictions before stepping the world (so submit_day reflects
         # the day the prediction was made, not the post-step day).
         if predictions and self.conn is not None:
             from saas_bench.database import save_predictions as _save_predictions
+            _pred_exc_tb = None
             try:
                 with self._lock:
                     _save_predictions(self.conn, old_day, predictions, _time.time())
                     self.conn.commit()
             except Exception:
                 import traceback
-                traceback.print_exc()
+                _pred_exc_tb = traceback.format_exc()
+            if _pred_exc_tb is not None:
+                # Log AFTER releasing the lock so a buffered stderr write can't
+                # back-pressure the lock holder. (run 27c000a5 d105 hang.)
+                print(_pred_exc_tb, file=sys.stderr, flush=True)
 
         # Check for shocks BEFORE step_week (so shock effects apply this week)
         if self.shock_manager:
