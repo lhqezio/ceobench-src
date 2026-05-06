@@ -83,9 +83,41 @@ wiki_diagrams/
 
 # Archive
 archive/
-
-# Modal serving
+archived_runs/
+codex_agent_runs/
+oracle_runs/
+oracle_eval/
+oracle_run_artifacts/
+oracle_sweep/
+replay_runs/
 modal_glm5/
+modal_kimi_k25/
+modal_deploy/state/
+
+# Backups (local mirrors of remote run state, not source)
+backups/
+
+# Aux dirs (internal-only, not part of public package)
+analysis/
+build/
+dist/
+docs/
+modal_deploy/
+monitor/
+paper/
+plots/
+prompts/
+presentation/
+public_sources/examples/__pycache__/
+sequence-diagram/
+tests/
+tools/
+variants/
+viz/
+
+# Scratch / tmp
+_tmp_*/
+core.*
 
 # Misc generated data
 negotiation_llm_output.txt

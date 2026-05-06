@@ -1,9 +1,0 @@
-{
-  "table": "social_media_posts",
-  "description": "Public customer feedback posts on social media",
-  "columns": {
-    "post_id": "INTEGER PRIMARY KEY \u2014 Unique post ID",
-    "day": "INTEGER \u2014 Day posted",
-    "content": "TEXT \u2014 Post content text"
-  }
-}

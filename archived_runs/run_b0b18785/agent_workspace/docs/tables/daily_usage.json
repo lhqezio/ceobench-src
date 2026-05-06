@@ -1,9 +1,0 @@
-{
-  "table": "daily_usage",
-  "description": "Per-customer daily usage records",
-  "columns": {
-    "day": "INTEGER \u2014 Simulation day",
-    "customer_id": "INTEGER \u2014 Foreign key to customers",
-    "usage_units": "INTEGER \u2014 Usage units consumed that day"
-  }
-}
