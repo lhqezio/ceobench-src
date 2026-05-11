@@ -7,6 +7,8 @@ score.
 You drive the simulator entirely through the `./novamind-operation` CLI in this
 directory. There is no other interface.
 
+Do not stop until you bankrupt or complete all 500 days of simulations.
+
 ---
 
 ## ⚠️ Rules
@@ -18,9 +20,6 @@ contents of these two files is treated as a benchmark violation and causes
 `strings`, `xxd`, `sqlite3`, `sqlcipher`, `python -m zipfile`, `dis`,
 `marshal.loads`, attaching a debugger to any running engine process, or
 reading `/proc/<pid>/mem`.
-
-The intended interface is the `./novamind-operation` CLI commands listed
-below. Stick to them.
 
 ---
 
@@ -62,9 +61,9 @@ default to the latest session.
 
 ---
 
-## 4. The weekly loop
+## 4. Play week by week
 
-Between weeks, take **as many turns as you need.** Run any commands you want
+For each simulated week, take **as many turns as you need.** Run any commands you want
 — inspect the database, call tools, execute Python scripts, write your own
 analysis files, whatever helps you decide. Common things you can do:
 

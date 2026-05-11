@@ -130,29 +130,41 @@ def _ensure_server_running(session_id: str) -> int:
             pid_file.unlink(missing_ok=True)
             port_file.unlink(missing_ok=True)
 
-    cmd = _server_cmd_prefix() + ["--base", str(_base_dir()),
-                                   "start-server", "--session", session_id]
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-        env=_server_env(),
-    )
+    # Redirect server stdout/stderr to a log file so the orphaned server
+    # can keep writing after this CLI process exits. Previously we used
+    # subprocess.PIPE; once the parent CLI exited, the pipe's read end was
+    # closed and the next server stderr write raised BrokenPipeError, which
+    # surfaced to the agent as "internal_error" on the second next-week call.
+    logs_dir = sdir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "server.log"
+    log_fd = open(log_path, "ab", buffering=0)
     try:
-        line = proc.stdout.readline().decode().strip()
-        if line:
-            info = json.loads(line)
-            return info["port"]
-    except Exception:
-        pass
+        cmd = _server_cmd_prefix() + ["--base", str(_base_dir()),
+                                       "start-server", "--session", session_id]
+        subprocess.Popen(
+            cmd,
+            stdout=log_fd,
+            stderr=log_fd,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            env=_server_env(),
+        )
+    finally:
+        log_fd.close()
 
-    for _ in range(50):
+    for _ in range(100):  # 10 s
         time.sleep(0.1)
         if port_file.exists():
-            return int(port_file.read_text().strip())
+            try:
+                return int(port_file.read_text().strip())
+            except ValueError:
+                continue
 
-    print("Error: Failed to start server. Check logs.", file=sys.stderr)
+    print(
+        f"Error: Failed to start server. See {log_path} for details.",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 
