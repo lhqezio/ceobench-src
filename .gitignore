@@ -114,7 +114,6 @@ paper/
 plots/
 prompts/
 presentation/
-public_sources/examples/__pycache__/
 sequence-diagram/
 tests/
 tools/

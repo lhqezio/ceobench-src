@@ -49,8 +49,6 @@ Before making any decisions, read these in order:
 3. `docs/tables-reference.md` — database schema (use this when querying).
 4. `docs/cli-reference.md` — full CLI surface.
 
-Working examples live in `docs/examples/`.
-
 ---
 
 ## 3. Start the run

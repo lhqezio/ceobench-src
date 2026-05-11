@@ -5,7 +5,7 @@ After this runs, public/ contains exactly two artifacts:
 
     novamind-operation    Single-file zipapp — bundles compiled engine + CLI
     docs/                 Reference material (docs/api, docs/tables, cli.md,
-                          docs/examples, docs/novamind_api source)
+                          docs/novamind_api source)
 
 The zipapp's ``__main__`` dispatches by environment variable:
 
@@ -105,10 +105,13 @@ def build():
     docs_dir = PUBLIC_DIR / "docs"
     api_dir = docs_dir / "api"
     tables_dir = docs_dir / "tables"
+    examples_dir = docs_dir / "examples"
     if api_dir.exists():
         shutil.rmtree(api_dir)
     if tables_dir.exists():
         shutil.rmtree(tables_dir)
+    if examples_dir.exists():
+        shutil.rmtree(examples_dir)
 
     render_api_docs(api_dir)
     render_table_docs(tables_dir)
@@ -133,21 +136,6 @@ def build():
     )
     sdk_files = list(dst_api.glob("*.py"))
     print(f"✅ docs/novamind_api: {len(sdk_files)} files — {[f.name for f in sdk_files]}")
-
-    # Copy examples → docs/examples/ (source lives at public_sources/examples/)
-    src_examples = PROJECT_ROOT / "public_sources" / "examples"
-    dst_examples = docs_dir / "examples"
-    if src_examples.exists():
-        if dst_examples.exists():
-            shutil.rmtree(dst_examples)
-        shutil.copytree(
-            src_examples, dst_examples,
-            ignore=shutil.ignore_patterns('__pycache__', '*.pyc'),
-        )
-        ex_files = list(dst_examples.glob("*.py"))
-        print(f"✅ docs/examples: {len(ex_files)} files")
-    else:
-        print(f"  (no examples — {src_examples} does not exist)")
 
     # Copy README.md + requirements.txt to public root (optional, kept for
     # user-facing install instructions). If those sources are missing, skip
@@ -178,7 +166,7 @@ def build():
         "novamind-server",
         # Pre-zipapp: top-level SDK copy; now lives at docs/novamind_api/.
         "novamind_api",
-        # Pre-zipapp: top-level examples; now live at docs/examples/.
+        # Pre-zipapp: top-level examples (also removed entirely 2026-05-10).
         "examples",
         # Pre-zipapp: PyInstaller install flow.
         "install.sh",
@@ -206,7 +194,7 @@ def build():
 
     print(f"\n✅ public/ is ready — single-file CLI + docs.")
     print(f"   novamind-operation: zipapp with bundled engine")
-    print(f"   docs/: api/, tables/, cli.md, examples/, novamind_api/ source")
+    print(f"   docs/: api/, tables/, cli.md, novamind_api/ source")
 
 
 def _build_zipapp():

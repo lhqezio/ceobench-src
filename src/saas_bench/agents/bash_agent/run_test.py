@@ -782,7 +782,7 @@ __pycache__/
                 "_engine",          # pre-L1: bundled engine bytecode
                 "novamind-server",  # pre-zipapp: separate server launcher
                 "novamind_api",     # pre-zipapp: top-level SDK (now docs/novamind_api)
-                "examples",         # pre-zipapp: top-level examples (now docs/examples)
+                "examples",         # pre-zipapp: top-level examples (removed 2026-05-10)
                 "install.sh",       # pre-zipapp: PyInstaller bootstrap
             ]
             for stale_name in stale_names:
