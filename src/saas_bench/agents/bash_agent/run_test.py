@@ -194,6 +194,8 @@ class BashAgentRunner:
             self.api_key = env_vars.get("MODAL_API_KEY") or os.environ.get("MODAL_API_KEY")
         elif provider == "together":
             self.api_key = env_vars.get("TOGETHER_API_KEY") or os.environ.get("TOGETHER_API_KEY")
+        elif provider == "ai_sandbox":
+            self.api_key = env_vars.get("AI_SANDBOX_KEY") or os.environ.get("AI_SANDBOX_KEY")
         else:
             self.api_key = env_vars.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
@@ -227,6 +229,15 @@ class BashAgentRunner:
             if not ANTHROPIC_AVAILABLE:
                 raise ImportError("anthropic package required")
             self.client = anthropic.Anthropic(api_key=self.api_key)
+        elif provider == "ai_sandbox":
+            try:
+                from portkey_ai import Portkey
+            except ImportError as e:
+                raise ImportError(
+                    "portkey-ai package required for ai_sandbox provider. "
+                    "Install with: uv add portkey-ai"
+                ) from e
+            self.client = Portkey(api_key=self.api_key)
         else:
             import httpx
             client_kwargs = {"api_key": self.api_key}
@@ -1228,7 +1239,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run bash agent for SaaS Bench")
     parser.add_argument("--model", default="gpt-4o", help="Model name")
     parser.add_argument("--provider", default="openai",
-                        choices=["openai", "xai", "google", "anthropic", "bedrock", "modal", "together"],
+                        choices=["openai", "xai", "google", "anthropic", "bedrock", "modal", "together", "ai_sandbox"],
                         help="API provider")
     parser.add_argument("--base-url", help="Custom API base URL")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
