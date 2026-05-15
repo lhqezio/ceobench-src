@@ -199,6 +199,15 @@ class Simulator:
         self._customer_quality_noise_rng = Generator(PCG64(quality_noise_seed ^ 0x434E5351))  # XOR with 'CNSQ'
         self._customer_quality_noise: Dict[int, float] = {}
 
+        # Separate RNG for "pick one customer from a query result" (used to replace
+        # `ORDER BY RANDOM() LIMIT 1` — SQLite's RANDOM() uses each connection's
+        # /dev/urandom-seeded PRNG, so source and replay would pick different rows.
+        # With this RNG, we draw an OFFSET deterministically and use
+        # `ORDER BY customer_id LIMIT 1 OFFSET k`, which is replayable.
+        # Derived from an existing seed (no extra `rng` draw) so adding this RNG
+        # does not shift the main `self.rng` stream — backward-compatible.
+        self._customer_pick_rng = Generator(PCG64(quality_noise_seed ^ 0x43504943))  # XOR with 'CPIC'
+
         # v3.4ab: Involuntary churn — base seed for deterministic per-(group, month) μ_t draw.
         # The actual sub-RNG is derived stably from (init_seed, crc32(group_id), month) so customer
         # visit order within a month does NOT affect the draw. Each (group, month) gets one μ_t.
@@ -801,6 +810,7 @@ class Simulator:
             '_competitor_rng': _serialize_state(self._competitor_rng),
             '_quality_rng': _serialize_state(self._quality_rng),
             '_customer_quality_noise_rng': _serialize_state(self._customer_quality_noise_rng),
+            '_customer_pick_rng': _serialize_state(self._customer_pick_rng),
         }
 
         # Save per-group RNGs
@@ -875,6 +885,8 @@ class Simulator:
         _restore_state(self._quality_rng, states['_quality_rng'])
         if '_customer_quality_noise_rng' in states:
             _restore_state(self._customer_quality_noise_rng, states['_customer_quality_noise_rng'])
+        if '_customer_pick_rng' in states:
+            _restore_state(self._customer_pick_rng, states['_customer_pick_rng'])
 
         # Restore per-group RNGs
         if '_group_rngs' in states:
@@ -3521,15 +3533,28 @@ class Simulator:
                     total_w = sum(weights)
                     probs = [w / total_w for w in weights]
                     target_group = self.rng.choice(list(groups), p=probs)
-                    # Find a random subscriber from target group
-                    target_sub = self.conn.execute("""
-                        SELECT c.customer_id, cs.satisfaction
+                    # Pick a subscriber deterministically: count first, draw an
+                    # OFFSET from _customer_pick_rng, then ORDER BY customer_id.
+                    # This replaces SQLite's `ORDER BY RANDOM()` which uses each
+                    # connection's /dev/urandom-seeded PRNG (not replayable).
+                    n_subs = self.conn.execute("""
+                        SELECT COUNT(*)
                         FROM customers c
                         JOIN subscriptions s ON c.customer_id = s.customer_id
-                        JOIN customer_state cs ON c.customer_id = cs.customer_id
                         WHERE c.group_id = ? AND s.status = 'subscribed' AND s.end_day IS NULL
-                        ORDER BY RANDOM() LIMIT 1
-                    """, (target_group,)).fetchone()
+                    """, (target_group,)).fetchone()[0]
+                    if n_subs <= 0:
+                        target_sub = None
+                    else:
+                        offset = int(self._customer_pick_rng.integers(0, n_subs))
+                        target_sub = self.conn.execute("""
+                            SELECT c.customer_id, cs.satisfaction
+                            FROM customers c
+                            JOIN subscriptions s ON c.customer_id = s.customer_id
+                            JOIN customer_state cs ON c.customer_id = cs.customer_id
+                            WHERE c.group_id = ? AND s.status = 'subscribed' AND s.end_day IS NULL
+                            ORDER BY c.customer_id LIMIT 1 OFFSET ?
+                        """, (target_group, offset)).fetchone()
                     if target_sub:
                         self._generate_social_post_with_context(
                             target_sub['customer_id'], target_group,
@@ -4094,11 +4119,14 @@ class Simulator:
             return
 
         # === Fire all calls in parallel ===
+        # Iterate futures in submission order (not completion order via
+        # `as_completed`) so DB write order is deterministic across runs —
+        # `post_id` auto-increment then matches source exactly.
         results = []
         max_workers = max(len(unified_calls), self.MAX_POSTS_PER_DAY)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(fn) for fn in unified_calls]
-            for future in as_completed(futures):
+            for future in futures:
                 results.append(future.result())
 
         # === Process results (write to DB) ===
@@ -4272,7 +4300,8 @@ class Simulator:
 
         executor, futures, influence_cache = async_state
         results = []
-        for future in as_completed(futures):
+        # Submission-order iteration — deterministic DB write order across runs.
+        for future in futures:
             results.append(future.result())
         executor.shutdown(wait=False)
 
@@ -4583,8 +4612,10 @@ class Simulator:
                     )
                     judge_futures[future] = gid
 
-                for future in as_completed(judge_futures):
-                    gid = judge_futures[future]
+                # Iterate in submission order (dict preserves insertion order in
+                # Python 3.7+) — not `as_completed`, which yields in completion
+                # order and would make DB write ordering non-deterministic.
+                for future, gid in judge_futures.items():
                     try:
                         effect, reasoning, in_tok, out_tok = future.result()
                         effect_by_group[gid] = effect
@@ -4674,22 +4705,36 @@ class Simulator:
                         )
                         reply_futures[future] = gid
 
-                    for future in as_completed(reply_futures):
-                        gid = reply_futures[future]
+                    # Submission-order iteration (dict insertion order preserved)
+                    # — not `as_completed`, which yields completion order and would
+                    # make DB write ordering non-deterministic.
+                    for future, gid in reply_futures.items():
                         try:
                             reply_text, in_tok, out_tok = future.result()
                             eff = effect_by_group[gid]
 
                             # Add as a regular social media post (visible to agent)
                             sentiment = 'positive' if eff > 0 else 'negative'
-                            # Pick a random active subscriber from this group;
-                            # fall back to market_observer if no subscribers yet
-                            cust = self.conn.execute("""
-                                SELECT c.customer_id FROM customers c
+                            # Pick an active subscriber from this group deterministically:
+                            # count first, draw OFFSET from _customer_pick_rng, then
+                            # ORDER BY customer_id (replayable; replaces SQLite's
+                            # non-seeded ORDER BY RANDOM()). Falls back to
+                            # market_observer if no subscribers yet.
+                            n_subs_g = self.conn.execute("""
+                                SELECT COUNT(*) FROM customers c
                                 JOIN subscriptions s ON c.customer_id = s.customer_id
                                 WHERE c.group_id = ? AND s.status = 'subscribed' AND s.end_day IS NULL
-                                ORDER BY RANDOM() LIMIT 1
-                            """, (gid,)).fetchone()
+                            """, (gid,)).fetchone()[0]
+                            if n_subs_g <= 0:
+                                cust = None
+                            else:
+                                offset_g = int(self._customer_pick_rng.integers(0, n_subs_g))
+                                cust = self.conn.execute("""
+                                    SELECT c.customer_id FROM customers c
+                                    JOIN subscriptions s ON c.customer_id = s.customer_id
+                                    WHERE c.group_id = ? AND s.status = 'subscribed' AND s.end_day IS NULL
+                                    ORDER BY c.customer_id LIMIT 1 OFFSET ?
+                                """, (gid, offset_g)).fetchone()
                             customer_id = cust['customer_id'] if cust else self._market_observer_id
 
                             comment_pid = add_social_media_post(
@@ -5284,6 +5329,29 @@ Requirements:
         if getattr(self.config, 'competitor_events_disabled', False):
             return
 
+        # LLM-replay: fire ONLY the events source actually had, using source's
+        # exact boost/feedback values. Gated by `BOSSBENCH_LLM_REPLAY_DB` env
+        # var — production unchanged.
+        try:
+            from . import llm_replay as _llm_replay
+            if _llm_replay.is_enabled():
+                cache = _llm_replay.get_cache()
+                by_day = getattr(cache, "competitor_events_by_day", None)
+                src_event = by_day.get(self.current_day) if by_day else None
+                if src_event is None:
+                    return
+                # Idempotency: skip if we already inserted this event.
+                row = self.conn.execute(
+                    "SELECT COUNT(*) FROM competitor_events WHERE start_day = ?",
+                    (self.current_day,),
+                ).fetchone()
+                if row and row[0] > 0:
+                    return
+                self._fire_replayed_competitor_event(src_event)
+                return
+        except Exception as _e:
+            print(f"[llm_replay] competitor-event replay failed: {_e}", flush=True)
+
         # Grace period: no competitor events before drift_grace_period_days
         grace = getattr(self.config, 'drift_grace_period_days', 0)
         if grace > 0 and self.current_day < grace:
@@ -5444,6 +5512,80 @@ Requirements:
 
         # No notification for competitor events (agent can observe via social media / quality metrics)
 
+    def _fire_replayed_competitor_event(self, src_event: dict):
+        """Insert source's competitor event verbatim AND apply all the side
+        effects the normal firing path would (global drift, per-group drift,
+        unreleased-bank drain). Uses source's stored values where available;
+        consumes `_competitor_rng` for per-segment drain (config-correct
+        magnitude). Only called when `BOSSBENCH_LLM_REPLAY_DB` is set.
+        """
+        boost = float(src_event["boost_amount"])
+        sampled_boost = float(src_event.get("sampled_boost") or boost)
+        feedback_u = float(src_event.get("feedback_u") or 0.0)
+        unreleased_pre = float(src_event.get("unreleased_pre") or 0.0)
+        feedback_term = float(src_event.get("feedback_term") or 0.0)
+        winner = src_event.get("winner") or "sampled"
+        post_end_day = int(src_event["post_end_day"])
+        desc = src_event.get("description") or ""
+
+        if winner == "feedback":
+            current_bank = get_global_state(
+                self.conn, "unreleased_base_quality_improvement", 0.0
+            )
+            new_bank = max(0.0, current_bank - feedback_u * current_bank)
+            set_global_state(
+                self.conn, "unreleased_base_quality_improvement", new_bank
+            )
+
+        self.conn.execute(
+            """
+            INSERT INTO competitor_events (
+                start_day, boost_amount, post_end_day, description, applied,
+                sampled_boost, feedback_u, unreleased_pre, feedback_term, winner
+            )
+            VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+            """,
+            (
+                self.current_day, boost, post_end_day, desc,
+                sampled_boost, feedback_u, unreleased_pre, feedback_term, winner,
+            ),
+        )
+
+        update_global_drift(self.conn, boost)
+
+        for group_id, coef in COMPETITOR_REACTIVITY_Q_BIAS.items():
+            if coef == 0.0:
+                continue
+            update_group_drift(
+                self.conn, group_id, coef * boost, 0.0, self.current_day
+            )
+
+        # Per-segment drain — engine's normal path also consumes
+        # `_competitor_rng.uniform()` here, so we do the same (config-correct
+        # magnitude, ~0.05 per segment).
+        seg_rows = self.conn.execute(
+            "SELECT group_id FROM group_parameters"
+        ).fetchall()
+        for seg_row in seg_rows:
+            seg_group_id = seg_row["group_id"]
+            seg_bank_key = f"unreleased_targeted_dev_{seg_group_id}"
+            seg_unreleased = get_global_state(self.conn, seg_bank_key, 0.0)
+            if seg_unreleased <= 0.0:
+                continue
+            seg_u = float(self._competitor_rng.uniform(
+                self.config.competitor_segment_drain_u_min,
+                self.config.competitor_segment_drain_u_max,
+            ))
+            seg_drain = seg_u * seg_unreleased
+            if seg_drain <= 0.0:
+                continue
+            update_group_drift(
+                self.conn, seg_group_id, seg_drain, 0.0, self.current_day
+            )
+            set_global_state(
+                self.conn, seg_bank_key, max(0.0, seg_unreleased - seg_drain)
+            )
+
     def _generate_competitor_event_posts(self):
         """Generate social media posts for active competitor events.
 
@@ -5558,6 +5700,14 @@ Requirements:
             product_name: The player's product name (for comparison context)
             perspective: The author's perspective/role
         """
+        # LLM-replay short-circuit: skip live Bedrock, return empty to force
+        # template fallback. Competitor posts have reputation_impact=0 and
+        # influence_score=0, so content choice doesn't affect engine state.
+        # Gated by `BOSSBENCH_LLM_REPLAY_DB` env var — production unchanged.
+        from . import llm_replay as _llm_replay
+        if _llm_replay.is_enabled():
+            return ""
+
         severity_guidance = {
             'minor': "This is a small, incremental improvement. Tone: measured, noting it but not alarmed.",
             'moderate': "This is a meaningful upgrade that raises the bar. Tone: impressed, noting competitive pressure.",
@@ -7281,6 +7431,19 @@ Guidelines:
 
         self.current_day += 1
         config = self.get_current_config()
+
+        # LLM-replay: if source had an agent_social_media_post on (current_day - 1)
+        # and replay's DB doesn't have one for that day yet, insert it with
+        # effect_by_group='{}' so `_process_agent_social_posts` (later in this
+        # step_day) judges it via the cached judge — replicating source's RNG
+        # consumption exactly. No-op (early-return inside the helper) when
+        # LLM replay is disabled — production runs see zero behavior change.
+        try:
+            from . import llm_replay as _llm_replay
+            if _llm_replay.is_enabled():
+                _llm_replay.ensure_agent_post_for_day(self.conn, self.current_day - 1)
+        except Exception:
+            pass
 
         # Refresh SQLite planner stats every 7 days. Without this the day-0
         # empty-DB stats from init_database() stay frozen and the planner

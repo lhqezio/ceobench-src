@@ -497,6 +497,18 @@ Output ONLY the post text, nothing else."""
         # V2.2: Use social_media_temperature (0.95) for higher creative variety
         social_temperature = self.config.social_media_temperature
 
+        # LLM-replay cache: when BOSSBENCH_LLM_REPLAY_DB is set, return cached
+        # content from the source run instead of calling the live LLM.
+        from . import llm_replay as _llm_replay
+        if _llm_replay.is_enabled():
+            cached = _llm_replay.get_cache().get_customer_post(day, customer_id)
+            return CustomerLLMResponse(
+                text=cached or "",
+                sentiment=sentiment,
+                input_tokens=0,
+                output_tokens=0,
+            )
+
         if social_provider in ("bedrock", "anthropic"):
             # Bedrock or direct Anthropic — both share the .messages.create() API
             response = self.social_post_client.messages.create(
@@ -1052,6 +1064,16 @@ def judge_agent_social_post(
     """
     import re
 
+    # LLM-replay cache: return source's judge result if available, else fall
+    # back to a neutral effect (0.0) — no live LLM call.
+    from . import llm_replay as _llm_replay
+    if _llm_replay.is_enabled():
+        cached = _llm_replay.get_cache().get_judge_by_content(post_content, group_id)
+        if cached is not None:
+            effect, reasoning = cached
+            return effect, reasoning, 0, 0
+        return 0.0, "", 0, 0
+
     # Build recent posts context (up to 10, with original post for replies)
     history_str = ""
     if recent_agent_posts:
@@ -1160,6 +1182,14 @@ def generate_customer_reply_to_agent(
     Returns:
         (reply_text: str, input_tokens: int, output_tokens: int)
     """
+    # LLM-replay cache: return the source's recorded reply text if available.
+    from . import llm_replay as _llm_replay
+    if _llm_replay.is_enabled():
+        cached = _llm_replay.get_cache().get_reply_by_content(
+            agent_post_content, group_id
+        )
+        return (cached or ""), 0, 0
+
     sentiment_desc = "strongly positive" if effect_score > 0 else "strongly negative"
 
     context = ""

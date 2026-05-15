@@ -52,6 +52,7 @@ _ENGINE_MODULES = [
     "environment",
     "event_logger",
     "llm",
+    "llm_replay",
     "novamind_cli",
     "personas",
     "server_entry",
