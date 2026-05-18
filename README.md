@@ -4,7 +4,7 @@
 
 # 🤖 CEO-Bench: Can Agents Play the Long Game?
 
-Source repository for **CEO-Bench** — a long-horizon agent benchmark in which an
+Source repository for **CEO-Bench**, a long-horizon agent benchmark in which an
 LLM agent operates a fictional AI startup for 500 simulated days.
 
 ---
@@ -26,19 +26,19 @@ observable, noisy, and evolving market with delayed and coupled consequences.
 
 ## 🚀 Running CEO-Bench
 
-### 🔑 Setup — Environment variables
+### 🔑 Setup: Environment variables
 
 The simulator uses a small Claude model (**Haiku 4.5** by default) to generate
 customer-facing social-media content during the simulation. Pick **one**
 provider and export the matching credentials:
 
 ```bash
-# Option A — Amazon Bedrock (default)
+# Option A: Amazon Bedrock (default)
 export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
 export AWS_REGION="us-east-2"
 
-# Option B — Anthropic direct API
+# Option B: Anthropic direct API
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
@@ -54,7 +54,7 @@ If you switch to `anthropic`, set `social_post_llm_model` to
 
 ---
 
-### 🎯 Option A — Evaluate any coding agent easily
+### 🎯 Option A: Evaluate any coding agent easily
 
 We built CEO-Bench into a single executable and docs that any coding agent can just download the game and start playing.
 
@@ -68,9 +68,9 @@ Download this, read instructions, and finish 500 day gameplay. https://github.co
 
 ---
 
-### ⚙️ Option B — Customize the configuration
+### ⚙️ Option B: Customize the configuration
 
-All tunable simulator constants live in **`src/saas_bench/config.py`** — pricing,
+All tunable simulator constants live in **`src/saas_bench/config.py`**: pricing,
 customer groups, ad-channel productivity, R&D speed, competitor difficulty, etc.
 After editing, rebuild the public bundle. 
 
@@ -87,7 +87,7 @@ An important difficulty is competitor strength. Competitor keeps track of a unre
 
 ---
 
-### 🤖 Option C — Replicate the bash-agent baseline
+### 🤖 Option C: Replicate the bash-agent baseline
 
 In our experiment, we use a baseline agent with basic bash tool as agent harness. To reproduce the experiments:
 
@@ -113,20 +113,20 @@ bash scripts/resume_run.sh bash_agent_runs/run_<id>   # resume from checkpoint
 Each run lands at `bash_agent_runs/run_<id>/` with `world.nmdb`, `messages.jsonl`,
 `logs/`, `agent_workspace/` (a fresh git repo with weekly commits), `config.json`,
 and `checkpoint.json`. Provider credentials needed at runtime depend on the
-chosen model — see `agents/bash_agent/agent.py` for the full provider list
+chosen model; see `agents/bash_agent/agent.py` for the full provider list
 (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_*`, `GOOGLE_API_KEY`, `XAI_API_KEY`,
 `TOGETHER_API_KEY`, `MODAL_TOKEN_*`).
 
 ---
 
-## 🔓 Analyzing agent trajectory
+## 📈 Analyzing agent trajectory
 
 Every finished run leaves a single artifact: an encrypted `world.nmdb` ledger
-(SQLCipher, page-level AES-256). It is the complete record of the run — cash,
+(SQLCipher, page-level AES-256). It is the complete record of the run: cash,
 subscriptions, customers, competitor events, and every action the agent took.
 
 The decryption key is fixed and bundled into the published `novamind-operation`
-zipapp at build time — see `KEYS.md` in this repo for the value, or import it
+zipapp at build time; see `KEYS.md` in this repo for the value, or import it
 from the compiled `saas_bench._embedded_key` module. To decrypt and query:
 
 ```bash

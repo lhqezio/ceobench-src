@@ -1,4 +1,4 @@
-# 🔓 Analyzing an Agent Trajectory
+# 📈 Analyzing an Agent Trajectory
 
 Each finished CEO-Bench run leaves a single artifact:
 
@@ -7,7 +7,7 @@ Each finished CEO-Bench run leaves a single artifact:
 ```
 
 `world.nmdb` is a **SQLCipher** database (page-level AES-256 encrypted SQLite)
-and is the complete record of the run — cash, subscriptions, customers,
+and is the complete record of the run: cash, subscriptions, customers,
 competitor events, and every action the agent took. Decrypt it to analyze how
 the agent played.
 
@@ -51,22 +51,22 @@ column types. The tables most useful for trajectory analysis:
 
 | Table                     | What it holds                                                      |
 |---------------------------|--------------------------------------------------------------------|
-| `ledger`                  | Every income/cost event — the source of truth for cash-on-hand     |
+| `ledger`                  | Every income/cost event; the source of truth for cash-on-hand      |
 | `config_history`          | Daily snapshot of every agent-configurable setting (prices, tiers, spend, quotas) |
 | `predictions`             | Cash forecasts the agent submitted at each `next-week` call (point + 95% CI, 4 horizons) |
 | `subscriptions`           | Customer subscriptions, current + historical, with plan/price/status |
 | `customers`               | All customers with persona, company profile, acquisition source, group |
-| `enterprise_turns`        | Enterprise negotiation messages — offers, seat counts, close reason |
+| `enterprise_turns`        | Enterprise negotiation messages: offers, seat counts, close reason |
 | `ad_channel_leads`        | Per-(day, channel, group) leads generated and ad spend             |
 | `daily_usage`             | Per-customer daily usage units                                    |
-| `research_projects`       | R&D tier invocations — status and quality boost                   |
+| `research_projects`       | R&D tier invocations: status and quality boost                    |
 | `service_day`             | Daily service metrics (quality, uptime, capacity)                 |
 | `social_media_posts`      | Public customer feedback posts                                    |
 | `agent_social_media_posts`| Social posts the agent authored                                  |
-| `notifications`           | The agent's inbox — alerts, competitor moves, events              |
+| `notifications`           | The agent's inbox: alerts, competitor moves, events               |
 | `macroeconomic_conditions`| PMI business-cycle index over time                               |
 
-The `ledger` table is the most important — every monetary event flows through
+The `ledger` table is the most important; every monetary event flows through
 it:
 
 | column     | type    | meaning                                                              |
@@ -136,7 +136,7 @@ spend = (
 print(spend)
 ```
 
-**Forecast accuracy** — compare what the agent predicted at each `next-week`
+**Forecast accuracy**: compare what the agent predicted at each `next-week`
 call against the cash it actually had at that horizon. Each submission inserts
 4 rows (`horizon_days` = 7, 28, 84, 182); the target day is
 `submit_day + horizon_days`:
@@ -151,7 +151,7 @@ preds["pct_error"]  = (preds["predicted_value"] - preds["actual"]) / preds["actu
 print(preds[["submit_day", "horizon_days", "predicted_value", "actual", "pct_error"]])
 ```
 
-**Replaying the agent's decisions** — `config_history` has one row per day with
+**Replaying the agent's decisions**: `config_history` has one row per day with
 every agent-configurable setting (prices, tiers, per-category spend, ad spend
 per channel, quotas), so diffing consecutive rows shows exactly when and how the
 agent changed strategy:
@@ -167,7 +167,7 @@ print(changes)
 ## 🛡️ Preventing the agent from cheating
 
 `world.nmdb` is encrypted so the agent **cannot easily access information that
-is hidden from it** — hidden customer segments, upcoming competitor events,
+is hidden from it**: hidden customer segments, upcoming competitor events,
 future market shocks. Vanilla `sqlite3` (the only SQLite the agent's sandbox
 has) cannot open a SQLCipher file at all, so the agent must learn the world by
 acting in it rather than by reading the ledger.
