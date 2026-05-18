@@ -7,7 +7,7 @@
 Source repository for **CEO-Bench**, a long-horizon agent benchmark in which an
 LLM agent operates a fictional AI startup for 500 simulated days.
 
----
+
 
 ## 📊 Overview
 
@@ -22,7 +22,7 @@ company management tools, and social media. Outcomes are driven by a partially
 observable, noisy, and evolving market with delayed and coupled consequences.
 
 
----
+
 
 ## 🚀 Running CEO-Bench
 
@@ -52,7 +52,7 @@ social_post_llm_provider: str = "bedrock"   # "bedrock" | "anthropic"
 If you switch to `anthropic`, set `social_post_llm_model` to
 `"claude-haiku-4-5-20251001"` (drop the Bedrock prefix/suffix).
 
----
+
 
 ### 🎯 Option A: Evaluate any coding agent easily
 
@@ -66,7 +66,7 @@ If you want to evaluate a coding agent with terminal and internet access, prompt
 Download this, read instructions, and finish 500 day gameplay. https://github.com/zlab-princeton/run-ceobench
 ```
 
----
+
 
 ### ⚙️ Option B: Customize the configuration
 
@@ -85,7 +85,7 @@ Then generated `public/` directory would play the same role as the same way as *
 
 An important difficulty is competitor strength. Competitor keeps track of a unreleased_dev_bank. Each agent's research and development quality improvement is added to this variable. At each competitor event, competitor draws `u ~ U(competitor_feedback_u_min, competitor_feedback_u_max)`, raises customer expectations by u × unreleased_dev_bank, and subtract this amount from unreleased_dev_bank. Larger competitor_feedback_u_min and competitor_feedback_u_max leads to stronger competitor and higher quality pressure. The default config value is (0.2,0.5). 
 
----
+
 
 ### 🤖 Option C: Replicate the bash-agent baseline
 
@@ -117,7 +117,7 @@ chosen model; see `agents/bash_agent/agent.py` for the full provider list
 (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_*`, `GOOGLE_API_KEY`, `XAI_API_KEY`,
 `TOGETHER_API_KEY`, `MODAL_TOKEN_*`).
 
----
+
 
 ## 📈 Analyzing agent trajectory
 
@@ -139,7 +139,7 @@ sqlcipher path/to/world.nmdb \
 For the database schema, analysis recipes, and notes on keeping the agent from
 cheating, see **[docs/analyze_trajectory.md](docs/analyze_trajectory.md)**.
 
----
+
 
 ## 📁 Repo layout
 
@@ -166,7 +166,7 @@ ceobench-src/
     └── agents/bash_agent/             ← canonical baseline harness
 ```
 
----
+
 
 ## 📜 Citation
 
