@@ -89,10 +89,31 @@ An important difficulty is competitor strength. Competitor keeps track of a unre
 
 ### 🤖 Option C: Replicate the bash-agent baseline
 
-In our experiment, we use a baseline agent with basic bash tool as agent harness. To reproduce the experiments:
+The paper's baseline gives an LLM a sandboxed bash shell plus the public CLI and
+runs the full 500-day loop with checkpointing and logging. The full process:
+
+**1. Install dependencies** (one-time):
 
 ```bash
-# Single run (Bedrock Sonnet 4.6, max reasoning effort)
+uv sync
+```
+
+**2. Set provider credentials** in a `.env` file at the repo root. Which keys you
+need depends on the agent model; for the default Bedrock run:
+
+```bash
+AWS_ACCESS_KEY_ID="..."
+AWS_SECRET_ACCESS_KEY="..."
+AWS_REGION="us-east-2"
+```
+
+Other providers read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`,
+`XAI_API_KEY`, `TOGETHER_API_KEY`, or `MODAL_TOKEN_*`. No `NMDB_KEY` is needed:
+the SQLCipher key is embedded in the engine.
+
+**3. Run.** `public/` ships prebuilt, so there is no build step:
+
+```bash
 uv run python -m saas_bench.agents.bash_agent.run_test \
     --model us.anthropic.claude-sonnet-4-6 \
     --provider bedrock \
@@ -102,20 +123,26 @@ uv run python -m saas_bench.agents.bash_agent.run_test \
     --workspace bash_agent_runs
 ```
 
-Convenience launchers wrap this with `nohup setsid` for long unattended runs:
+`--provider` accepts `openai | anthropic | bedrock | google | xai | together |
+modal | ai_sandbox`; `--reasoning-effort` accepts `none | low | medium | high |
+xhigh | max`. Pass `--label <tag>` to tag a config variant on the dashboard.
+
+For long unattended runs, the convenience launchers wrap the command with
+`nohup setsid`:
 
 ```bash
-bash scripts/start_fresh_sonnet_bash.sh      # Bedrock Sonnet 4.6, max effort
-bash scripts/start_fresh_gpt_bash.sh         # OpenAI GPT-5.5, xhigh effort
-bash scripts/resume_run.sh bash_agent_runs/run_<id>   # resume from checkpoint
+bash scripts/start_fresh_sonnet_bash.sh             # Bedrock Sonnet 4.6, max effort
+bash scripts/start_fresh_gpt_bash.sh                # OpenAI GPT-5.5, xhigh effort
+bash scripts/resume_run.sh bash_agent_runs/run_<id> # resume from a checkpoint
 ```
 
-Each run lands at `bash_agent_runs/run_<id>/` with `world.nmdb`, `messages.jsonl`,
-`logs/`, `agent_workspace/` (a fresh git repo with weekly commits), `config.json`,
-and `checkpoint.json`. Provider credentials needed at runtime depend on the
-chosen model; see `agents/bash_agent/agent.py` for the full provider list
-(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_*`, `GOOGLE_API_KEY`, `XAI_API_KEY`,
-`TOGETHER_API_KEY`, `MODAL_TOKEN_*`).
+**4. Output.** Each run lands at `bash_agent_runs/run_<id>/` with `world.nmdb`
+(encrypted ledger), `messages.jsonl`, `logs/`, `agent_workspace/` (a fresh git
+repo with weekly commits), `config.json`, and `checkpoint.json`. To score and
+analyze the run, see [docs/analyze_trajectory.md](docs/analyze_trajectory.md).
+
+If you edit `src/saas_bench/config.py`, rebuild the bundle the agent sees with
+`uv run python scripts/build_public.py` before launching.
 
 
 
