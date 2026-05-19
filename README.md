@@ -136,10 +136,13 @@ bash scripts/start_fresh_gpt_bash.sh                # OpenAI GPT-5.5, xhigh effo
 bash scripts/resume_run.sh bash_agent_runs/run_<id> # resume from a checkpoint
 ```
 
-**4. Output.** Each run lands at `bash_agent_runs/run_<id>/` with `world.nmdb`
-(encrypted ledger), `messages.jsonl`, `logs/`, `agent_workspace/` (a fresh git
-repo with weekly commits), `config.json`, and `checkpoint.json`. To score and
-analyze the run, see [docs/analyze_trajectory.md](docs/analyze_trajectory.md).
+**4. Output.** Each run lands at `bash_agent_runs/run_<id>/`: `world.nmdb`
+(encrypted ledger), `config.json`, `checkpoint.json`, `agent_workspace/` (the
+agent's sandbox, a fresh git repo with weekly commits), and `logs/` containing
+per-turn `raw_responses_<id>.jsonl` (model thinking + tool calls),
+`tool_results_<id>.jsonl` (tool calls + their outputs), and
+`timing_<id>.jsonl`. To score and analyze the run, see
+[docs/analyze_trajectory.md](docs/analyze_trajectory.md).
 
 If you edit `src/saas_bench/config.py`, rebuild the bundle the agent sees with
 `uv run python scripts/build_public.py` before launching.
