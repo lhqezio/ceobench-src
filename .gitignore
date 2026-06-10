@@ -115,10 +115,11 @@ plots/
 prompts/
 presentation/
 sequence-diagram/
-# tests/ is internal-only, except test_docs_coverage.py which build_public.py
-# runs as a preflight check — it must ship so a fresh clone can rebuild public/.
+# tests/ is internal-only, except selected source-level regression tests that
+# must ship so a fresh clone can rebuild and verify public/.
 tests/*
 !tests/test_docs_coverage.py
+!tests/test_anthropic_agent_models.py
 tools/
 variants/
 viz/

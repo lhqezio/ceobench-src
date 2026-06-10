@@ -58,7 +58,8 @@ export AWS_REGION="us-east-2"
 
 ```python
 agent_llm_provider: str = "bedrock"
-agent_llm_model: str = "us.anthropic.<agent-model-id>"
+agent_llm_model: str = "anthropic.claude-fable-5"  # Claude Fable 5
+# or another Bedrock model id, e.g. "us.anthropic.claude-sonnet-4-6"
 
 social_post_llm_provider: str = "bedrock"
 social_post_llm_model: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
@@ -75,7 +76,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 ```python
 agent_llm_provider: str = "anthropic"
-agent_llm_model: str = "<agent-model-id>"
+agent_llm_model: str = "claude-fable-5"  # Claude Fable 5
 
 social_post_llm_provider: str = "anthropic"
 social_post_llm_model: str = "claude-haiku-4-5"
@@ -96,6 +97,10 @@ enterprise LLMs use the simulator config and do not reuse the agent-only
 `--api-key`. If you change a simulator provider, also set the corresponding
 model to the identifier expected by that provider; model names are not
 translated automatically.
+
+For Claude Fable 5 agent runs, use `--provider anthropic --model claude-fable-5`
+for the direct Anthropic API, or `--provider bedrock --model anthropic.claude-fable-5`
+for Amazon Bedrock.
 
 
 ### 🎯 Option A: Evaluate any coding agent easily

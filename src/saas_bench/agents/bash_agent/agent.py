@@ -909,161 +909,261 @@ class BashAgent(BaseAgent):
                     del input_items, tools
                     continue
 
+    _ANTHROPIC_VALID_EFFORTS = frozenset({'low', 'medium', 'high', 'xhigh', 'max'})
+    _ANTHROPIC_HAIKU_BUDGET_BY_EFFORT = {
+        'low': 4096,
+        'medium': 16000,
+        'high': 32000,
+        'xhigh': 48000,
+        'max': 64000,
+    }
+
+    def _is_anthropic_fable_or_mythos_model(self) -> bool:
+        """Return True for Claude Fable/Mythos model ids across providers."""
+        model = self.model.lower()
+        return 'fable' in model or 'mythos' in model
+
+    def _anthropic_extra_headers(self) -> Dict[str, str]:
+        """Return model-specific Anthropic beta headers."""
+        if self._is_anthropic_fable_or_mythos_model():
+            return {}
+        return {'anthropic-beta': 'output-128k-2025-02-19'}
+
+    def _apply_anthropic_reasoning_params(self, api_kwargs: Dict[str, Any]) -> None:
+        """Add Anthropic thinking/effort params for models that support them."""
+        if self.reasoning_effort not in self._ANTHROPIC_VALID_EFFORTS:
+            return
+
+        if 'haiku' in self.model.lower():
+            api_kwargs['thinking'] = {
+                'type': 'enabled',
+                'budget_tokens': self._ANTHROPIC_HAIKU_BUDGET_BY_EFFORT[self.reasoning_effort],
+            }
+            return
+
+        # Fable/Mythos and the recent Opus/Sonnet models use adaptive thinking
+        # with output_config.effort instead of fixed budget tokens.
+        api_kwargs['thinking'] = {'type': 'adaptive'}
+        api_kwargs['output_config'] = {'effort': self.reasoning_effort}
+
+    def _anthropic_content_text(self, content: Any) -> str:
+        """Best-effort text extraction from Anthropic content blocks."""
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get('text') or block.get('content')
+            else:
+                text = getattr(block, 'text', None)
+            if text:
+                parts.append(str(text))
+        return "\n".join(parts)
+
+    def _anthropic_no_tool_feedback(self, response: Any, assistant_content: Any) -> str:
+        """Feedback used when Anthropic returns text/refusal instead of a tool."""
+        stop_reason = getattr(response, 'stop_reason', '') or ''
+        preview = self._anthropic_content_text(assistant_content).strip()
+        if len(preview) > 1200:
+            preview = preview[:1200] + "..."
+
+        if stop_reason == 'refusal':
+            return (
+                "Your previous Claude response was a refusal and did not call a tool. "
+                "This benchmark only requires safe business-simulator operations in the "
+                "local workspace. Do not attempt to answer the refused topic in prose. "
+                "Choose the next safe benchmark action and call one of the available tools. "
+                f"Refusal preview: {preview or '(no text)'}"
+            )
+
+        return (
+            "You must call a tool to proceed. If you need context, use read_file, "
+            "search_files, or bash. If you have nothing else to do this week, call "
+            "`./novamind-operation next-week <cash_1wk> <cash_4wk> <cash_12wk>` via bash. "
+            f"Previous non-tool response preview: {preview or '(no text)'}"
+        )
+
     def _call_anthropic(self) -> Optional[Action]:
         """Call Anthropic/Bedrock API and parse the response."""
         import copy
-        messages = []
-        for msg in self.conversation:
-            if msg.role == 'system':
-                continue
-            messages.append({'role': msg.role, 'content': copy.deepcopy(msg.content)})
 
-        # Strip any leftover cache_control from previous messages, then add
-        # a single breakpoint on the last message.  Combined with the system
-        # prompt and tools breakpoints this stays within the 4-breakpoint limit.
-        def _strip_cache_control(content):
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and 'cache_control' in block:
-                        del block['cache_control']
+        no_tool_retries = 0
 
-        for msg in messages:
-            _strip_cache_control(msg.get('content'))
+        while True:
+            messages = []
+            for msg in self.conversation:
+                if msg.role == 'system':
+                    continue
+                messages.append({'role': msg.role, 'content': copy.deepcopy(msg.content)})
 
-        # Add cache_control to the last message so the entire conversation
-        # prefix is cached between consecutive turns.
-        if messages:
-            last_msg = messages[-1]
-            content = last_msg.get('content', '')
-            if isinstance(content, str) and content:
-                last_msg['content'] = [
-                    {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
-                ]
-            elif isinstance(content, list) and content:
-                last_block = content[-1]
-                if isinstance(last_block, dict):
-                    last_block['cache_control'] = {"type": "ephemeral"}
+            # Strip any leftover cache_control from previous messages, then add
+            # a single breakpoint on the last message. Combined with the system
+            # prompt and tools breakpoints this stays within the 4-breakpoint limit.
+            def _strip_cache_control(content):
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and 'cache_control' in block:
+                            del block['cache_control']
 
-        system_text = self._get_system_prompt_with_memory()
-        system_content = [
-            {
-                "type": "text",
-                "text": system_text,
-                "cache_control": {"type": "ephemeral"},
+            for msg in messages:
+                _strip_cache_control(msg.get('content'))
+
+            # Add cache_control to the last message so the entire conversation
+            # prefix is cached between consecutive turns.
+            if messages:
+                last_msg = messages[-1]
+                content = last_msg.get('content', '')
+                if isinstance(content, str) and content:
+                    last_msg['content'] = [
+                        {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+                    ]
+                elif isinstance(content, list) and content:
+                    last_block = content[-1]
+                    if isinstance(last_block, dict):
+                        last_block['cache_control'] = {"type": "ephemeral"}
+
+            system_text = self._get_system_prompt_with_memory()
+            system_content = [
+                {
+                    "type": "text",
+                    "text": system_text,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+
+            from .tools import get_bash_agent_anthropic_tools
+            tools = get_bash_agent_anthropic_tools()
+            if tools:
+                tools[-1]['cache_control'] = {"type": "ephemeral"}
+
+            api_kwargs = {
+                'model': self.model,
+                'max_tokens': 128000,
+                'system': system_content,
+                'messages': messages,
+                'tools': tools,
             }
-        ]
+            extra_headers = self._anthropic_extra_headers()
+            if extra_headers:
+                # output-128k beta lets Sonnet/Opus 4.x emit up to 128K output
+                # tokens. Fable/Mythos expose 128K output without this beta.
+                api_kwargs['extra_headers'] = extra_headers
 
-        from .tools import get_bash_agent_anthropic_tools
-        tools = get_bash_agent_anthropic_tools()
-        if tools:
-            tools[-1]['cache_control'] = {"type": "ephemeral"}
+            # Anthropic SDK refuses non-streaming when max_tokens implies > 10min
+            # budget (raised in _calculate_nonstreaming_timeout). Always stream
+            # for max_tokens > 64000.
+            use_streaming = api_kwargs['max_tokens'] > 64000
+            if self.reasoning_effort in self._ANTHROPIC_VALID_EFFORTS:
+                self._apply_anthropic_reasoning_params(api_kwargs)
+                use_streaming = True
 
-        # Claude 4.x thinking API (adaptive effort). Opus 4.7 requires this
-        # shape; 4.6 accepts it too. Old {'type':'enabled','budget_tokens': N}
-        # is rejected by 4.7.
-        _VALID_EFFORTS = {'low', 'medium', 'high', 'xhigh', 'max'}
-        api_kwargs = {
-            'model': self.model,
-            'max_tokens': 128000,
-            'system': system_content,
-            'messages': messages,
-            'tools': tools,
-            # output-128k beta lets Sonnet/Opus 4.x emit up to 128K output
-            # tokens (default cap is 64K). Required when max_tokens > 64000.
-            'extra_headers': {'anthropic-beta': 'output-128k-2025-02-19'},
-        }
-        # Anthropic SDK refuses non-streaming when max_tokens implies > 10min
-        # budget (raised in _calculate_nonstreaming_timeout). Always streams
-        # for max_tokens > 64000.
-        use_streaming = api_kwargs['max_tokens'] > 64000
-        if self.reasoning_effort and self.reasoning_effort in _VALID_EFFORTS:
-            if 'haiku' in self.model.lower():
-                _BUDGET_BY_EFFORT = {'low': 4096, 'medium': 16000, 'high': 32000, 'xhigh': 48000, 'max': 64000}
-                api_kwargs['thinking'] = {'type': 'enabled', 'budget_tokens': _BUDGET_BY_EFFORT[self.reasoning_effort]}
-            else:
-                api_kwargs['thinking'] = {'type': 'adaptive'}
-                api_kwargs['output_config'] = {'effort': self.reasoning_effort}
-            use_streaming = True
+            try:
+                if use_streaming:
+                    with self.client.messages.stream(**api_kwargs) as stream:
+                        response = stream.get_final_message()
+                else:
+                    response = self.client.messages.create(**api_kwargs)
 
-        try:
-            if use_streaming:
-                with self.client.messages.stream(**api_kwargs) as stream:
-                    response = stream.get_final_message()
-            else:
-                response = self.client.messages.create(**api_kwargs)
+                self.total_turns += 1
+                self._consecutive_errors = 0
 
-            self.total_turns += 1
-            self._consecutive_errors = 0
+                # Capture token usage (Anthropic format)
+                usage = getattr(response, 'usage', None)
+                if usage:
+                    self.last_input_tokens = getattr(usage, 'input_tokens', 0) or 0
+                    self.last_output_tokens = getattr(usage, 'output_tokens', 0) or 0
+                    # Anthropic cache tracking: cache_creation_input_tokens + cache_read_input_tokens
+                    self.last_cached_tokens = getattr(usage, 'cache_read_input_tokens', 0) or 0
+                    self.last_reasoning_tokens = 0  # Anthropic doesn't expose reasoning tokens separately
+                else:
+                    self.last_input_tokens = 0
+                    self.last_output_tokens = 0
+                    self.last_cached_tokens = 0
+                    self.last_reasoning_tokens = 0
+                self.total_input_tokens += self.last_input_tokens
+                self.total_output_tokens += self.last_output_tokens
+                self.total_cached_tokens += self.last_cached_tokens
+                self.total_reasoning_tokens += self.last_reasoning_tokens
 
-            # Capture token usage (Anthropic format)
-            usage = getattr(response, 'usage', None)
-            if usage:
-                self.last_input_tokens = getattr(usage, 'input_tokens', 0) or 0
-                self.last_output_tokens = getattr(usage, 'output_tokens', 0) or 0
-                # Anthropic cache tracking: cache_creation_input_tokens + cache_read_input_tokens
-                self.last_cached_tokens = getattr(usage, 'cache_read_input_tokens', 0) or 0
-                self.last_reasoning_tokens = 0  # Anthropic doesn't expose reasoning tokens separately
-            else:
-                self.last_input_tokens = 0
-                self.last_output_tokens = 0
-                self.last_cached_tokens = 0
-                self.last_reasoning_tokens = 0
-            self.total_input_tokens += self.last_input_tokens
-            self.total_output_tokens += self.last_output_tokens
-            self.total_cached_tokens += self.last_cached_tokens
-            self.total_reasoning_tokens += self.last_reasoning_tokens
+                if self.response_callback:
+                    self.response_callback(
+                        turn=self.total_turns,
+                        day=self.current_day,
+                        messages=messages,
+                        raw_response=response.model_dump() if hasattr(response, 'model_dump') else str(response),
+                    )
 
-            if self.response_callback:
-                self.response_callback(
-                    turn=self.total_turns,
-                    day=self.current_day,
-                    messages=messages,
-                    raw_response=response.model_dump() if hasattr(response, 'model_dump') else str(response),
-                )
+                assistant_content = response.content
+                self.conversation.append(Message(
+                    role='assistant',
+                    content=assistant_content
+                ))
 
-            assistant_content = response.content
-            self.conversation.append(Message(
-                role='assistant',
-                content=assistant_content
-            ))
+                tool_use_blocks = [block for block in assistant_content if block.type == 'tool_use']
+                if not tool_use_blocks:
+                    no_tool_retries += 1
+                    stop_reason = getattr(response, 'stop_reason', '') or 'no_tool_use'
+                    if self.tool_result_callback:
+                        self.tool_result_callback(
+                            self.total_turns,
+                            self.current_day,
+                            '_anthropic_no_tool',
+                            {'stop_reason': stop_reason, 'attempt': no_tool_retries},
+                            self._anthropic_content_text(assistant_content),
+                        )
+                    if no_tool_retries > 3:
+                        raise RuntimeError(
+                            "Anthropic response did not include a tool_use block after "
+                            f"{no_tool_retries} attempts (last stop_reason={stop_reason!r})."
+                        )
+                    print(
+                        f"  Anthropic returned no tool_use "
+                        f"(stop_reason={stop_reason!r}); feeding feedback and regenerating."
+                    )
+                    self.conversation.append(Message(
+                        role='user',
+                        content=self._anthropic_no_tool_feedback(response, assistant_content),
+                    ))
+                    continue
 
-            tool_use_blocks = [block for block in assistant_content if block.type == 'tool_use']
-            if not tool_use_blocks:
-                return None
+                first_tool = tool_use_blocks[0]
 
-            first_tool = tool_use_blocks[0]
+                # Skip extra parallel tool calls
+                partial_results = []
+                for extra in tool_use_blocks[1:]:
+                    partial_results.append({
+                        'type': 'tool_result',
+                        'tool_use_id': extra.id,
+                        'content': f"[Skipped - only one tool per turn. Call {extra.name} again if needed.]",
+                    })
 
-            # Skip extra parallel tool calls
-            partial_results = []
-            for extra in tool_use_blocks[1:]:
-                partial_results.append({
-                    'type': 'tool_result',
-                    'tool_use_id': extra.id,
-                    'content': f"[Skipped - only one tool per turn. Call {extra.name} again if needed.]",
-                })
+                self._pending_tool_calls = [{'id': first_tool.id, 'name': first_tool.name, '_partial_results': partial_results}]
+                return Action(tool=first_tool.name, arguments=first_tool.input or {})
 
-            self._pending_tool_calls = [{'id': first_tool.id, 'name': first_tool.name, '_partial_results': partial_results}]
-            return Action(tool=first_tool.name, arguments=first_tool.input or {})
+            except Exception as e:
+                import traceback
+                if str(e).startswith("Anthropic response did not include a tool_use block"):
+                    raise
+                error_msg = f"Anthropic LLM call error: {e}"
+                tb = traceback.format_exc()
+                print(f"\n{'='*60}")
+                print(f"ERROR in BashAgent._call_anthropic()")
+                print(f"{'='*60}")
+                print(error_msg)
+                print(f"Traceback:\n{tb}")
+                print(f"{'='*60}\n")
 
-        except Exception as e:
-            import traceback
-            error_msg = f"Anthropic LLM call error: {e}"
-            tb = traceback.format_exc()
-            print(f"\n{'='*60}")
-            print(f"ERROR in BashAgent._call_anthropic()")
-            print(f"{'='*60}")
-            print(error_msg)
-            print(f"Traceback:\n{tb}")
-            print(f"{'='*60}\n")
+                self._consecutive_errors += 1
+                if self._consecutive_errors <= 3:
+                    wait = 2 ** self._consecutive_errors
+                    print(f"  Retrying in {wait}s (attempt {self._consecutive_errors}/3)...")
+                    time.sleep(wait)
+                    return self._call_anthropic()
 
-            self._consecutive_errors += 1
-            if self._consecutive_errors <= 3:
-                wait = 2 ** self._consecutive_errors
-                print(f"  Retrying in {wait}s (attempt {self._consecutive_errors}/3)...")
-                time.sleep(wait)
-                return self._call_anthropic()
-
-            raise RuntimeError(
-                f"LLM failed {self._consecutive_errors} consecutive times. "
-                f"Last error: {e}"
-            ) from e
+                raise RuntimeError(
+                    f"LLM failed {self._consecutive_errors} consecutive times. "
+                    f"Last error: {e}"
+                ) from e
