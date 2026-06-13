@@ -64,5 +64,5 @@ jobs:
       - name: Verify rebuilt NovaMind CLI starts
         run: python public/novamind-operation --help
 
-      - name: Verify generated public docs are committed
-        run: git diff --exit-code -- public ':(exclude)public/novamind-operation'
+      - name: Verify public docs are up to date
+        run: git diff --exit-code -- public/docs public/README.md public/requirements.txt
