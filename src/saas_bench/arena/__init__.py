@@ -2,6 +2,7 @@
 
 from .company import ArenaCompanySpec, DEFAULT_COMPANY_NAMES, make_company_specs
 from .coordinator import (
+    ArenaAcquisitionSlotSubmission,
     ArenaCoordinatorHTTPServer,
     ArenaNextWeekCoordinator,
     ArenaNextWeekSubmission,
@@ -23,6 +24,8 @@ from .shared_market import (
     SharedArrival,
     allocate_shared_arrivals,
     choose_company_plan,
+    choose_evaluated_company_plan,
+    choose_evaluated_company_plan_with_source,
     choose_for_shared_arrival,
     compute_group_arrival_rates,
     compute_required_quality,
@@ -34,6 +37,7 @@ from .shared_market import (
 __all__ = [
     "ArenaChoiceResult",
     "ArenaCompanySpec",
+    "ArenaAcquisitionSlotSubmission",
     "ArenaCoordinatorHTTPServer",
     "ArenaCustomerIntroduction",
     "ArenaEmail",
@@ -51,6 +55,8 @@ __all__ = [
     "SharedArrival",
     "allocate_shared_arrivals",
     "choose_company_plan",
+    "choose_evaluated_company_plan",
+    "choose_evaluated_company_plan_with_source",
     "choose_for_shared_arrival",
     "compute_group_arrival_rates",
     "compute_required_quality",

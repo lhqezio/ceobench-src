@@ -203,6 +203,96 @@ def choose_company_plan(
     return best or NO_PRODUCT_CHOICE
 
 
+def choose_evaluated_company_plan(
+    offers: Iterable[Mapping[str, object]],
+) -> ArenaChoiceResult:
+    """Choose among pre-evaluated company-plan offers.
+
+    The simulator owns CEOBench offer evaluation. Arena uses this helper when
+    offers already include perceived quality, required quality, satisfaction,
+    effective price, and an acceptable flag.
+    """
+
+    best_offer, best_satisfaction = _best_evaluated_offer(offers)
+
+    if best_offer is None:
+        return NO_PRODUCT_CHOICE
+
+    return _choice_from_evaluated_offer(best_offer, best_satisfaction)
+
+
+def choose_evaluated_company_plan_with_source(
+    offers: Iterable[Mapping[str, object]],
+    *,
+    source_company_id: str,
+    comparison_hurdle: float = 0.0,
+) -> ArenaChoiceResult:
+    """Choose among offers with first-contact advantage for the source company.
+
+    If the source company's best offer is unacceptable, the best acceptable
+    rival can win without a hurdle. If source is acceptable, a rival must clear
+    ``source_satisfaction + comparison_hurdle``.
+    """
+
+    source_company_id = str(source_company_id)
+    comparison_hurdle = max(0.0, float(comparison_hurdle or 0.0))
+    normalized_offers = list(offers)
+    source_offer, source_satisfaction = _best_evaluated_offer(
+        offer for offer in normalized_offers
+        if str(offer.get("company_id")) == source_company_id
+    )
+    rival_offer, rival_satisfaction = _best_evaluated_offer(
+        offer for offer in normalized_offers
+        if str(offer.get("company_id")) != source_company_id
+    )
+
+    if source_offer is None:
+        if rival_offer is None:
+            return NO_PRODUCT_CHOICE
+        return _choice_from_evaluated_offer(rival_offer, rival_satisfaction)
+
+    if rival_offer is None:
+        return _choice_from_evaluated_offer(source_offer, source_satisfaction)
+
+    if rival_satisfaction > source_satisfaction + comparison_hurdle:
+        return _choice_from_evaluated_offer(rival_offer, rival_satisfaction)
+
+    return _choice_from_evaluated_offer(source_offer, source_satisfaction)
+
+
+def _best_evaluated_offer(
+    offers: Iterable[Mapping[str, object]],
+) -> tuple[Mapping[str, object] | None, float]:
+    best_offer: Mapping[str, object] | None = None
+    best_satisfaction = float("-inf")
+    for offer in offers:
+        if not bool(offer.get("acceptable")):
+            continue
+        try:
+            satisfaction = float(offer["satisfaction"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if satisfaction > best_satisfaction:
+            best_satisfaction = satisfaction
+            best_offer = offer
+    return best_offer, best_satisfaction
+
+
+def _choice_from_evaluated_offer(
+    offer: Mapping[str, object],
+    satisfaction: float,
+) -> ArenaChoiceResult:
+    return ArenaChoiceResult(
+        company_id=str(offer.get("company_id")),
+        display_name=str(offer.get("display_name")),
+        plan=str(offer.get("plan")),
+        satisfaction=satisfaction,
+        required_quality=float(offer.get("required_quality", 0.0)),
+        perceived_quality=float(offer.get("perceived_quality", 0.0)),
+        effective_price=float(offer.get("effective_price", 0.0)),
+    )
+
+
 def plan_offers_from_company_config(
     *,
     company_id: str,
