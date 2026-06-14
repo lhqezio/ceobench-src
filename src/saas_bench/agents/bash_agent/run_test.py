@@ -84,6 +84,10 @@ class BashAgentRunner:
         reasoning_effort: Optional[str] = None,
         continue_from: Optional[Path] = None,
         label: Optional[str] = None,
+        arena_company_id: Optional[str] = None,
+        arena_display_name: Optional[str] = None,
+        arena_coordinator_port: Optional[int] = None,
+        arena_company_count: Optional[int] = None,
     ):
         default_config = BenchmarkConfig()
         self.model = model or default_config.agent_llm_model
@@ -97,6 +101,10 @@ class BashAgentRunner:
         self.reasoning_effort = reasoning_effort or default_config.agent_llm_reasoning_effort
         self.continue_from = continue_from
         self.label = label  # Optional human-readable variant tag — surfaced on the dashboard
+        self.arena_company_id = arena_company_id
+        self.arena_display_name = arena_display_name
+        self.arena_coordinator_port = arena_coordinator_port
+        self.arena_company_count = arena_company_count
         self.anthropic_fallback_model = (
             ANTHROPIC_FABLE_FALLBACK_MODEL
             if self.provider == "anthropic" and "fable" in self.model.lower()
@@ -180,8 +188,20 @@ class BashAgentRunner:
         env_file = Path(__file__).parent.parent.parent.parent.parent / ".env"
         env_vars = load_env_file(env_file)
 
-        for key in ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
-                    'AWS_SESSION_TOKEN', 'NMDB_KEY']:
+        for key in [
+            'AWS_ACCESS_KEY_ID',
+            'AWS_SECRET_ACCESS_KEY',
+            'AWS_REGION',
+            'AWS_SESSION_TOKEN',
+            'NMDB_KEY',
+            'ANTHROPIC_API_KEY',
+            'OPENAI_API_KEY',
+            'GOOGLE_API_KEY',
+            'XAI_API_KEY',
+            'MODAL_API_KEY',
+            'TOGETHER_API_KEY',
+            'AI_SANDBOX_KEY',
+        ]:
             if key in env_vars and key not in os.environ:
                 os.environ[key] = env_vars[key]
 
@@ -516,6 +536,122 @@ __pycache__/
         print(f"  Session created via CLI: {self._session_id}")
         self._git_commit_workspace("Initial workspace setup (day 0)")
         return session_info
+
+    def _install_arena_operation_wrapper(self):
+        """Replace workspace novamind-operation with an arena-aware wrapper."""
+
+        if not self.arena_company_id or not self.arena_coordinator_port:
+            return
+
+        import stat
+
+        wrapper_path = self.agent_workspace / "novamind-operation"
+        real_path = self.agent_workspace / "novamind-operation-real"
+        if not wrapper_path.exists():
+            raise FileNotFoundError(f"Missing novamind-operation at {wrapper_path}")
+
+        if not real_path.exists():
+            shutil.move(str(wrapper_path), str(real_path))
+        elif wrapper_path.exists() and wrapper_path.read_bytes().startswith(b"#!"):
+            wrapper_path.unlink()
+
+        wrapper = f'''#!/usr/bin/env python3
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+COMPANY_ID = {self.arena_company_id!r}
+DISPLAY_NAME = {self.arena_display_name!r}
+COORDINATOR_PORT = {int(self.arena_coordinator_port)!r}
+REAL = Path(__file__).with_name("novamind-operation-real")
+
+
+def _die(message, code=1):
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def _get_json(port, path, timeout=30):
+    req = urllib.request.Request(f"http://127.0.0.1:{{port}}{{path}}")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def _post_json(port, path, body, timeout=7200):
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{{port}}{{path}}",
+        data=data,
+        headers={{"Content-Type": "application/json"}},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.loads(exc.read())
+        except Exception:
+            return {{"success": False, "error": f"HTTP {{exc.code}}"}}
+
+
+def _prediction_body(args):
+    if len(args) < 13:
+        _die(
+            "Error: arena next-week requires rationale plus 12 cash forecast numbers.",
+            2,
+        )
+    rationale = args[1]
+    try:
+        values = [float(value) for value in args[2:14]]
+    except ValueError:
+        _die("Error: cash forecast values must be numeric.", 2)
+    return rationale, {{
+        "cash_1wk": {{"point": values[0], "lower": values[1], "upper": values[2]}},
+        "cash_4wk": {{"point": values[3], "lower": values[4], "upper": values[5]}},
+        "cash_12wk": {{"point": values[6], "lower": values[7], "upper": values[8]}},
+        "cash_26wk": {{"point": values[9], "lower": values[10], "upper": values[11]}},
+    }}
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] != "next-week":
+        os.execv(sys.executable, [sys.executable, str(REAL)] + args)
+
+    api_port = os.environ.get("NOVAMIND_API_PORT")
+    if not api_port:
+        _die("Error: NOVAMIND_API_PORT is required for arena next-week.")
+
+    rationale, predictions = _prediction_body(args)
+    status = _get_json(int(api_port), "/game-status")
+    payload = {{
+        "company_id": COMPANY_ID,
+        "display_name": DISPLAY_NAME,
+        "api_port": int(api_port),
+        "day": int(status.get("day", 0)),
+        "rationale": rationale,
+        "predictions": predictions,
+    }}
+    result = _post_json(COORDINATOR_PORT, "/next-week", payload)
+    if result.get("success"):
+        print(result.get("dashboard", ""))
+        return
+
+    print(f"Error: {{result.get('error', 'arena_next_week_failed')}}", file=sys.stderr)
+    if result.get("message"):
+        print(result["message"], file=sys.stderr)
+    raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()
+'''
+        wrapper_path.write_text(wrapper)
+        wrapper_path.chmod(wrapper_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
     def _public_dir(self) -> Path:
         """Location of the host-side public/ bundle (contains _engine/).
@@ -946,9 +1082,18 @@ __pycache__/
         # ── Step 3: Create tool executor + agent ──
         # Pass NOVAMIND_API_PORT so the CLI (./novamind-operation) connects to
         # the already-running server instead of trying to start a new one.
+        self._install_arena_operation_wrapper()
+        tool_env = {"NOVAMIND_API_PORT": str(self._server_port)}
+        if self.arena_company_id and self.arena_coordinator_port:
+            tool_env.update({
+                "CEOBENCH_ARENA_COMPANY_ID": self.arena_company_id,
+                "CEOBENCH_ARENA_DISPLAY_NAME": self.arena_display_name or self.arena_company_id,
+                "CEOBENCH_ARENA_COORDINATOR_PORT": str(self.arena_coordinator_port),
+                "CEOBENCH_ARENA_COMPANY_COUNT": str(self.arena_company_count or 1),
+            })
         self.tool_executor = BashAgentToolExecutor(
             workspace_path=self.agent_workspace,
-            env={"NOVAMIND_API_PORT": str(self._server_port)},
+            env=tool_env,
         )
 
         tool_descriptions = get_bash_agent_tool_descriptions()
@@ -1400,7 +1545,38 @@ def main():
                         help="Variant tag stored in config.json and shown on the dashboard "
                              "(e.g. 'leads_x1.25'). Lets multiple config variants be "
                              "distinguished without forking the run_id scheme.")
+    parser.add_argument("--arena", action="store_true",
+                        help="Run CEOBench Arena mode. With one company, this preserves ordinary CEOBench behavior.")
+    parser.add_argument("--arena-companies", type=int, default=1,
+                        help="Number of companies in arena mode (default: 1)")
+    parser.add_argument("--arena-models",
+                        help="Comma-separated model specs for arena companies, e.g. "
+                             "anthropic:claude-sonnet-4-6,openai:gpt-5")
     args = parser.parse_args()
+
+    if args.arena and args.arena_companies > 1:
+        if args.continue_from:
+            parser.error("--continue-from is not supported for multi-company arena runs yet")
+        from saas_bench.agents.bash_agent.arena_runner import ArenaBashAgentRunner
+
+        runner = ArenaBashAgentRunner(
+            company_count=args.arena_companies,
+            arena_models=args.arena_models,
+            model=args.model,
+            provider=args.provider,
+            base_url=args.base_url,
+            api_key=args.api_key,
+            seed=args.seed,
+            scenario=args.scenario,
+            total_days=args.days,
+            workspace_base=args.workspace,
+            reasoning_effort=args.reasoning_effort,
+            label=args.label,
+        )
+        result = runner.run(verbose=not args.quiet)
+        print(f"\nArena Result: {result['outcomes']}")
+        print(f"Workspace: {result['workspace_dir']}")
+        return
 
     runner = BashAgentRunner(
         model=args.model,
