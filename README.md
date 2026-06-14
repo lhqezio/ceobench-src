@@ -217,7 +217,8 @@ cheating, see **[docs/analyze_trajectory.md](docs/analyze_trajectory.md)**.
 ceobench-src/
 ├── README.md                          ← this file
 ├── docs/
-│   └── analyze_trajectory.md          ← decrypt, schema + analysis guide
+│   ├── analyze_trajectory.md          ← decrypt, schema + analysis guide
+│   └── arena-readme.md                ← Arena changes, mechanisms, and usage
 ├── public_sources/                    ← human-written inputs to the public build
 │   ├── README.md, requirements.txt
 │   └── examples/{autoplay_loop,basic_strategy}.py
