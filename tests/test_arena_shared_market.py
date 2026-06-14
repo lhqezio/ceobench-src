@@ -8,7 +8,10 @@ from saas_bench.arena import (
     ArenaPlanOffer,
     CompanyExposure,
     CustomerChoiceProfile,
+    SharedArrival,
+    allocate_shared_arrivals,
     choose_company_plan,
+    choose_for_shared_arrival,
     compute_group_arrival_rates,
     compute_required_quality,
     filter_offers_for_consideration_set,
@@ -287,3 +290,107 @@ def test_company_market_state_adapts_ceobench_abc_config_for_group():
     assert {offer.company_id for offer in offers} == {"company_1"}
     assert offers[0].effective_price == pytest.approx(15.0)
     assert offers[0].delivered_quality == pytest.approx((0.5 + 0.02 + 0.03) * 0.6)
+
+
+def test_shared_arrival_allocates_to_best_considered_company_plan():
+    profile = CustomerChoiceProfile(
+        group_id="S1",
+        steepness_left=0.8,
+        steepness_right=1.6,
+        c_max=100.0,
+        q_max=0.8,
+        q_min=0.2,
+    )
+    states = [
+        ArenaCompanyMarketState(
+            company_id="company_0",
+            display_name="NovaMind",
+            config={
+                "price_A": 20.0,
+                "price_B": 40.0,
+                "price_C": 60.0,
+                "tier_A": 1,
+                "tier_B": 1,
+                "tier_C": 1,
+            },
+            base_product_quality=0.5,
+        ),
+        ArenaCompanyMarketState(
+            company_id="company_1",
+            display_name="AsterAI",
+            config={
+                "price_A": 30.0,
+                "price_B": 50.0,
+                "price_C": 70.0,
+                "tier_A": 5,
+                "tier_B": 5,
+                "tier_C": 5,
+            },
+            base_product_quality=0.5,
+        ),
+    ]
+    arrival = SharedArrival(
+        group_id="S1",
+        source_company_id="company_0",
+        consideration_set=("company_0", "company_1"),
+    )
+
+    choice = choose_for_shared_arrival(arrival, profile, states)
+
+    assert choice.company_id == "company_1"
+    assert choice.display_name == "AsterAI"
+    assert choice.plan == "A"
+
+
+def test_shared_arrival_respects_consideration_set_and_no_product_choice():
+    profile = CustomerChoiceProfile(
+        group_id="S1",
+        steepness_left=0.8,
+        steepness_right=1.6,
+        c_max=100.0,
+        q_max=0.8,
+        q_min=0.2,
+    )
+    states = [
+        ArenaCompanyMarketState(
+            company_id="company_0",
+            display_name="NovaMind",
+            config={
+                "price_A": 20.0,
+                "price_B": 40.0,
+                "price_C": 60.0,
+                "tier_A": 1,
+                "tier_B": 1,
+                "tier_C": 1,
+            },
+            base_product_quality=0.1,
+        ),
+        ArenaCompanyMarketState(
+            company_id="company_1",
+            display_name="AsterAI",
+            config={
+                "price_A": 30.0,
+                "price_B": 50.0,
+                "price_C": 70.0,
+                "tier_A": 5,
+                "tier_B": 5,
+                "tier_C": 5,
+            },
+            base_product_quality=0.8,
+        ),
+    ]
+    arrival = SharedArrival(
+        group_id="S1",
+        source_company_id="company_0",
+        consideration_set=("company_0",),
+    )
+
+    allocations = allocate_shared_arrivals(
+        [arrival],
+        profiles_by_group={"S1": profile},
+        company_states=states,
+    )
+
+    assert len(allocations) == 1
+    assert allocations[0].arrival == arrival
+    assert not allocations[0].choice.chose_product

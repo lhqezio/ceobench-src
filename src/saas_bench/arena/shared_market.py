@@ -136,6 +136,14 @@ class SharedArrival:
     consideration_set: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class SharedAllocation:
+    """Outcome for one shared arrival after company-plan evaluation."""
+
+    arrival: SharedArrival
+    choice: ArenaChoiceResult
+
+
 def compute_required_quality(
     cost: float,
     profile: CustomerChoiceProfile,
@@ -318,6 +326,47 @@ def filter_offers_for_consideration_set(
 ) -> list[ArenaPlanOffer]:
     considered = set(consideration_set)
     return [offer for offer in offers if offer.company_id in considered]
+
+
+def choose_for_shared_arrival(
+    arrival: SharedArrival,
+    profile: CustomerChoiceProfile,
+    company_states: Iterable[ArenaCompanyMarketState],
+) -> ArenaChoiceResult:
+    """Evaluate one shared-market arrival across its consideration set."""
+
+    if profile.group_id != arrival.group_id:
+        raise ValueError("arrival group_id and profile group_id must match")
+
+    offers: list[ArenaPlanOffer] = []
+    for company_state in company_states:
+        if company_state.company_id in arrival.consideration_set:
+            offers.extend(company_state.offers_for_group(arrival.group_id))
+
+    return choose_company_plan(profile, offers)
+
+
+def allocate_shared_arrivals(
+    arrivals: Iterable[SharedArrival],
+    profiles_by_group: Mapping[str, CustomerChoiceProfile],
+    company_states: Iterable[ArenaCompanyMarketState],
+) -> list[SharedAllocation]:
+    """Allocate shared arrivals to company-plan choices or no product."""
+
+    states = list(company_states)
+    allocations: list[SharedAllocation] = []
+    for arrival in arrivals:
+        try:
+            profile = profiles_by_group[arrival.group_id]
+        except KeyError as exc:
+            raise ValueError(f"Missing customer profile for group {arrival.group_id}") from exc
+        allocations.append(
+            SharedAllocation(
+                arrival=arrival,
+                choice=choose_for_shared_arrival(arrival, profile, states),
+            )
+        )
+    return allocations
 
 
 def _cap_consideration_set(
