@@ -1,6 +1,13 @@
 """Shared-market extensions for CEOBench Arena."""
 
 from .company import ArenaCompanySpec, DEFAULT_COMPANY_NAMES, make_company_specs
+from .interactions import (
+    ArenaCustomerIntroduction,
+    ArenaEmail,
+    ArenaInteractionLog,
+    ArenaMoneyTransfer,
+    ArenaResearchShare,
+)
 from .shared_market import (
     ArenaChoiceResult,
     ArenaCompanyMarketState,
@@ -22,8 +29,13 @@ from .shared_market import (
 __all__ = [
     "ArenaChoiceResult",
     "ArenaCompanySpec",
+    "ArenaCustomerIntroduction",
+    "ArenaEmail",
+    "ArenaInteractionLog",
     "ArenaCompanyMarketState",
+    "ArenaMoneyTransfer",
     "ArenaPlanOffer",
+    "ArenaResearchShare",
     "CompanyExposure",
     "CustomerChoiceProfile",
     "DEFAULT_COMPANY_NAMES",
