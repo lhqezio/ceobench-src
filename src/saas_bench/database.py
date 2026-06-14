@@ -101,7 +101,7 @@ TABLE_DOCS = {
         'columns': {
             'id': 'INTEGER PRIMARY KEY — Unique entry ID',
             'day': 'INTEGER — Simulation day',
-            'category': "TEXT — Category: 'subscription_payment', 'compute', 'capacity', 'advertising', 'operations', 'development', 'lead_acquisition_cost', 'initial_funding', 'market_research', 'group_research', 'research_project'",
+            'category': "TEXT — Category: 'subscription_payment', 'compute', 'capacity', 'advertising', 'operations', 'development', 'lead_acquisition_cost', 'initial_funding', 'market_research', 'group_research', 'research_project', 'ad_revenue', 'arena_transfer_in', 'arena_transfer_out'",
             'amount': 'REAL — Amount (positive=income, negative=expense)',
             'note': 'TEXT — Description of the transaction',
         }
@@ -140,6 +140,25 @@ TABLE_DOCS = {
             'quota_A': 'INTEGER — Plan A usage quota (units/day/customer)',
             'quota_B': 'INTEGER — Plan B usage quota (units/day/customer)',
             'quota_C': 'INTEGER — Plan C usage quota (units/day/customer)',
+        }
+    },
+    'arena_public_market_snapshots': {
+        'description': 'Arena-only public competitor snapshots. Populated by the Arena coordinator so companies can observe public rival state after weekly advances.',
+        'columns': {
+            'day': 'INTEGER — Simulation day when this public snapshot was recorded',
+            'company_id': 'TEXT — Stable Arena company identifier (e.g., company_0)',
+            'display_name': 'TEXT — Public company name',
+            'price_A': 'REAL — Public Plan A monthly price',
+            'price_B': 'REAL — Public Plan B monthly price',
+            'price_C': 'REAL — Public Plan C monthly price',
+            'tier_A': 'INTEGER — Public Plan A model tier',
+            'tier_B': 'INTEGER — Public Plan B model tier',
+            'tier_C': 'INTEGER — Public Plan C model tier',
+            'quota_A': 'INTEGER — Public Plan A usage quota',
+            'quota_B': 'INTEGER — Public Plan B usage quota',
+            'quota_C': 'INTEGER — Public Plan C usage quota',
+            'public_total_subscribers': 'INTEGER — Public Arena subscriber count summary for this company at snapshot time',
+            'public_subscribers_by_group_json': 'TEXT — JSON object of public subscriber counts by customer group',
         }
     },
     'social_media_posts': {
@@ -449,7 +468,8 @@ def init_database(db_path: Path) -> sqlite3.Connection:
                 'lead_acquisition_cost',
                 'initial_funding',
                 'market_research', 'group_research', 'research_project',
-                'ad_revenue'
+                'ad_revenue',
+                'arena_transfer_in', 'arena_transfer_out'
             )),
             amount REAL NOT NULL,  -- positive for income, negative for cost
             note TEXT
@@ -479,6 +499,27 @@ def init_database(db_path: Path) -> sqlite3.Connection:
             quota_B INTEGER NOT NULL DEFAULT 0,
             quota_C INTEGER NOT NULL DEFAULT 0
         );
+
+        -- Arena public competitor snapshots (agent-visible in Arena runs).
+        CREATE TABLE IF NOT EXISTS arena_public_market_snapshots (
+            day INTEGER NOT NULL,
+            company_id TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            price_A REAL NOT NULL,
+            price_B REAL NOT NULL,
+            price_C REAL NOT NULL,
+            tier_A INTEGER NOT NULL,
+            tier_B INTEGER NOT NULL,
+            tier_C INTEGER NOT NULL,
+            quota_A INTEGER NOT NULL,
+            quota_B INTEGER NOT NULL,
+            quota_C INTEGER NOT NULL,
+            public_total_subscribers INTEGER NOT NULL DEFAULT 0,
+            public_subscribers_by_group_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (day, company_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_arena_public_company_day
+            ON arena_public_market_snapshots(company_id, day);
 
         -- Advertising channel effectiveness history (for analytics)
         CREATE TABLE IF NOT EXISTS ad_channel_leads (
@@ -1023,6 +1064,83 @@ def init_database(db_path: Path) -> sqlite3.Connection:
             group_id TEXT NOT NULL,
             value REAL NOT NULL,
             PRIMARY KEY (day, channel_id, group_id)
+        );
+
+        -- Arena-only hidden allocation log.
+        -- Each row records one shared-market customer outcome as inserted into
+        -- this company's DB. Hidden from agents; useful for post-run analysis
+        -- of consideration sets, no-product choices, and lost-to-rival flow.
+        CREATE TABLE IF NOT EXISTS _hidden_arena_allocation_log (
+            allocation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            day INTEGER NOT NULL,
+            customer_id INTEGER,
+            group_id TEXT NOT NULL,
+            customer_type TEXT NOT NULL,
+            source_company_id TEXT NOT NULL,
+            target_company_id TEXT,
+            chosen_company_id TEXT,
+            outcome TEXT NOT NULL CHECK(outcome IN (
+                'subscribe', 'lost', 'enterprise', 'enterprise_skip'
+            )),
+            plan TEXT,
+            listed_price REAL,
+            effective_price REAL,
+            satisfaction REAL,
+            perceived_quality REAL,
+            required_quality REAL,
+            consideration_set_json TEXT NOT NULL DEFAULT '[]',
+            chosen_offer_json TEXT NOT NULL DEFAULT '{}',
+            offers_json TEXT NOT NULL DEFAULT '[]'
+        );
+        CREATE INDEX IF NOT EXISTS idx_hidden_arena_alloc_day
+            ON _hidden_arena_allocation_log(day);
+        CREATE INDEX IF NOT EXISTS idx_hidden_arena_alloc_group
+            ON _hidden_arena_allocation_log(group_id);
+
+        -- Arena-only hidden transfer application log.
+        -- Each company DB records a transfer_id once so coordinator retries
+        -- cannot duplicate ledger debits or credits.
+        CREATE TABLE IF NOT EXISTS _hidden_arena_money_transfer_applications (
+            transfer_id TEXT PRIMARY KEY,
+            day INTEGER NOT NULL,
+            direction TEXT NOT NULL CHECK(direction IN ('in', 'out')),
+            counterparty_company_id TEXT NOT NULL,
+            amount REAL NOT NULL,
+            memo TEXT NOT NULL DEFAULT '',
+            applied_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+
+        -- Arena-only hidden research-share application log.
+        -- Research sharing can move recipients at most one group-info level
+        -- toward the sender's observed level. It never directly changes
+        -- product quality.
+        CREATE TABLE IF NOT EXISTS _hidden_arena_research_share_applications (
+            share_id TEXT PRIMARY KEY,
+            day INTEGER NOT NULL,
+            sender_company_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            source_info_level INTEGER NOT NULL,
+            old_info_level INTEGER NOT NULL,
+            new_info_level INTEGER NOT NULL,
+            memo TEXT NOT NULL DEFAULT '',
+            applied_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+
+        -- Arena-only hidden cross-company switching log.
+        CREATE TABLE IF NOT EXISTS _hidden_arena_switching_log (
+            switch_id TEXT PRIMARY KEY,
+            day INTEGER NOT NULL,
+            source_company_id TEXT NOT NULL,
+            target_company_id TEXT NOT NULL,
+            source_customer_id INTEGER NOT NULL,
+            source_subscription_id INTEGER NOT NULL,
+            target_customer_id INTEGER,
+            group_id TEXT NOT NULL,
+            old_plan TEXT NOT NULL,
+            new_plan TEXT NOT NULL,
+            old_satisfaction REAL,
+            new_satisfaction REAL,
+            chosen_offer_json TEXT NOT NULL DEFAULT '{}'
         );
 
         -- Agent-authored social media posts & replies
