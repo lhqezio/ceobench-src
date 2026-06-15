@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from argparse import Namespace
 import threading
+import time
 import urllib.request
 
 from saas_bench import _public_cli
@@ -21,6 +22,25 @@ from saas_bench.arena.coordinator import (
 )
 from saas_bench.arena.shared_market import SharedArrival
 from saas_bench.novamind_api import _client, arena as arena_api
+
+
+def _wait_until(predicate, *, timeout_s: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    assert predicate()
+
+
+def _weekly_submission(company_id: str, *, day: int = 0, api_port: int = 12345):
+    return ArenaNextWeekSubmission(
+        company_id=company_id,
+        api_port=api_port,
+        day=day,
+        rationale="test",
+        predictions={},
+    )
 
 
 def test_weekly_dashboard_header_marks_bash_agent_day_advanced():
@@ -102,6 +122,45 @@ def test_public_cli_next_week_forwards_to_arena_coordinator(monkeypatch, capsys)
     assert calls[2][3]["company_id"] == "company_0"
     assert calls[2][3]["api_port"] == 6000
     assert calls[2][3]["day"] == 7
+
+
+def test_public_cli_arena_retire_forwards_to_coordinator(monkeypatch, capsys):
+    calls = []
+
+    def fake_api_call(port, method, path, body=None):
+        calls.append((port, method, path, body))
+        assert path == "/arena-retire-company"
+        return {
+            "success": True,
+            "company_id": body["company_id"],
+            "outcome": body["outcome"],
+            "active_company_ids": ["company_1"],
+        }
+
+    monkeypatch.setenv("CEOBENCH_ARENA_COMPANY_ID", "company_0")
+    monkeypatch.setenv("CEOBENCH_ARENA_COORDINATOR_PORT", "7000")
+    monkeypatch.setattr(_public_cli, "_api_call", fake_api_call)
+
+    _public_cli.cmd_arena_retire(Namespace(
+        arena_dir=None,
+        company_id=None,
+        outcome="bankrupt",
+    ))
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["success"]
+    assert output["company_id"] == "company_0"
+    assert calls == [
+        (
+            7000,
+            "POST",
+            "/arena-retire-company",
+            {
+                "company_id": "company_0",
+                "outcome": "bankrupt",
+            },
+        )
+    ]
 
 
 def test_arena_runner_resume_reattaches_company_run_dirs(monkeypatch, tmp_path):
@@ -299,6 +358,149 @@ def test_next_week_coordinator_blocks_until_all_companies_submit():
         assert "company_1" in results["company_1"]["dashboard"]
     finally:
         server.stop()
+
+
+def test_next_week_coordinator_retire_releases_waiting_active_companies():
+    callback_calls = []
+
+    def advance(submissions):
+        callback_calls.append(tuple(sorted(submissions)))
+        return {
+            company_id: {
+                "success": True,
+                "day": submission.day + 7,
+                "dashboard": f"day {submission.day + 7}",
+            }
+            for company_id, submission in submissions.items()
+        }
+
+    coordinator = ArenaNextWeekCoordinator(
+        ["company_0", "company_1", "company_2"],
+        advance,
+        wait_timeout_s=5,
+    )
+    results = {}
+
+    def submit(company_id):
+        results[company_id] = coordinator.submit(_weekly_submission(company_id))
+
+    threads = [
+        threading.Thread(target=submit, args=("company_0",)),
+        threading.Thread(target=submit, args=("company_1",)),
+    ]
+    for thread in threads:
+        thread.start()
+
+    _wait_until(lambda: len(coordinator._submissions_by_day.get(0, {})) == 2)
+    retire_result = coordinator.retire_company("company_2", outcome="bankrupt")
+
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert callback_calls == [("company_0", "company_1")]
+    assert retire_result["active_company_ids"] == ["company_0", "company_1"]
+    assert results["company_0"]["success"]
+    assert results["company_1"]["success"]
+
+
+def test_next_week_coordinator_rejects_retired_company_submission():
+    coordinator = ArenaNextWeekCoordinator(
+        ["company_0", "company_1"],
+        lambda submissions: {},
+        wait_timeout_s=1,
+    )
+
+    assert coordinator.retire_company("company_1", outcome="bankrupt")["success"]
+    result = coordinator.submit(_weekly_submission("company_1"))
+
+    assert result["success"] is False
+    assert result["error"] == "arena_company_retired"
+
+
+def test_acquisition_slot_coordinator_retire_releases_waiting_active_companies():
+    callback_calls = []
+
+    def advance_slot(day, submissions):
+        callback_calls.append((day, tuple(sorted(submissions))))
+        return {
+            company_id: {"success": True, "generation_result": {"total_leads": 0}}
+            for company_id in submissions
+        }
+
+    coordinator = ArenaNextWeekCoordinator(
+        ["company_0", "company_1", "company_2"],
+        lambda submissions: {},
+        acquisition_slot_callback=advance_slot,
+        wait_timeout_s=5,
+    )
+    results = {}
+
+    def submit_slot(company_id):
+        results[company_id] = coordinator.submit_acquisition_slot(
+            ArenaAcquisitionSlotSubmission(
+                company_id=company_id,
+                api_port=12345,
+                day=8,
+                display_name=company_id,
+            )
+        )
+
+    threads = [
+        threading.Thread(target=submit_slot, args=("company_0",)),
+        threading.Thread(target=submit_slot, args=("company_1",)),
+    ]
+    for thread in threads:
+        thread.start()
+
+    _wait_until(lambda: len(coordinator._slot_submissions_by_day.get(8, {})) == 2)
+    coordinator.retire_company("company_2", outcome="bankrupt")
+
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert callback_calls == [(8, ("company_0", "company_1"))]
+    assert results["company_0"]["success"]
+    assert results["company_1"]["success"]
+
+
+def test_arena_runner_retires_company_when_thread_finishes(tmp_path):
+    runner = ArenaBashAgentRunner(
+        company_count=2,
+        total_days=7,
+        workspace_base=tmp_path,
+        model="test-model",
+        provider="test-provider",
+    )
+    retired = []
+
+    class FakeCoordinator:
+        def retire_company(self, company_id, *, outcome=None):
+            retired.append((company_id, outcome))
+            return {"success": True}
+
+    class FakeCompanyRunner:
+        def __init__(self, outcome):
+            self.outcome = outcome
+
+        def run(self, *, verbose):
+            return {"outcome": self.outcome}
+
+    runner._coordinator = FakeCoordinator()
+    runner._runners = {
+        "company_0": FakeCompanyRunner("bankrupt"),
+        "company_1": FakeCompanyRunner("timeout"),
+    }
+
+    results = runner._run_company_threads(verbose=False)
+
+    assert results["company_0"]["outcome"] == "bankrupt"
+    assert results["company_1"]["outcome"] == "timeout"
+    assert set(retired) == {
+        ("company_0", "bankrupt"),
+        ("company_1", "timeout"),
+    }
 
 
 def test_arena_coordinator_routes_interaction_inbox():

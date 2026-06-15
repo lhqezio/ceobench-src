@@ -272,8 +272,25 @@ class ArenaBashAgentRunner:
             }
             for future in as_completed(future_by_company):
                 company_id = future_by_company[future]
-                results[company_id] = future.result()
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    self._retire_finished_company(
+                        company_id,
+                        outcome=type(exc).__name__,
+                    )
+                    raise
+                results[company_id] = result
+                self._retire_finished_company(
+                    company_id,
+                    outcome=str(result.get("outcome") or "completed"),
+                )
         return results
+
+    def _retire_finished_company(self, company_id: str, *, outcome: str) -> None:
+        if self._coordinator is None:
+            return
+        self._coordinator.retire_company(company_id, outcome=outcome)
 
     def _advance_submitted_week(
         self,

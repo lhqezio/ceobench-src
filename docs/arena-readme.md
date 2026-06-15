@@ -40,6 +40,7 @@ workspace, and agent loop. The coordinator handles shared-market behavior:
 
 - registers company servers
 - waits for every live company to submit `next-week`
+- retires terminal companies from future barriers
 - advances the simulation day by day behind the weekly interface
 - samples shared acquisition arrivals
 - allocates customers across companies
@@ -263,6 +264,19 @@ Stop the coordinator:
 ./public/novamind-operation arena-stop \
   --arena-dir /tmp/ceobench-arena
 ```
+
+If an external harness decides a company is terminal, for example because it
+bankrupted or timed out, retire that company so the remaining companies can keep
+advancing:
+
+```bash
+./novamind-operation arena-retire \
+  --company-id company_0 \
+  --outcome bankrupt
+```
+
+The bash-agent Arena runner does this automatically when a company thread
+finishes.
 
 ## Useful Agent-Side Queries
 

@@ -80,6 +80,7 @@ class ArenaNextWeekCoordinator:
         self._slot_results_by_day: dict[int, dict[str, dict]] = {}
         self._slot_advancing_days: set[int] = set()
         self._api_ports_by_company: dict[str, int] = {}
+        self._retired_company_ids: set[str] = set()
         self._display_names_by_company: dict[str, str] = {
             company_id: company_id for company_id in company_ids
         }
@@ -95,10 +96,12 @@ class ArenaNextWeekCoordinator:
                 "error": f"Unknown arena company_id: {submission.company_id}",
             }
 
-        self.register_company(
+        registration = self.register_company(
             company_id=submission.company_id,
             api_port=submission.api_port,
         )
+        if not registration.get("success"):
+            return registration
 
         deadline = time.monotonic() + self._wait_timeout_s
         with self._condition:
@@ -109,6 +112,8 @@ class ArenaNextWeekCoordinator:
                 self._advance_locked(submission.day)
 
             while submission.day not in self._results_by_day:
+                if submission.company_id in self._retired_company_ids:
+                    return self._retired_result_locked(submission.company_id)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return {
@@ -145,11 +150,13 @@ class ArenaNextWeekCoordinator:
                 "error": "arena_acquisition_slot_unconfigured",
             }
 
-        self.register_company(
+        registration = self.register_company(
             company_id=submission.company_id,
             api_port=submission.api_port,
             display_name=submission.display_name,
         )
+        if not registration.get("success"):
+            return registration
 
         deadline = time.monotonic() + self._wait_timeout_s
         with self._condition:
@@ -160,6 +167,8 @@ class ArenaNextWeekCoordinator:
                 self._advance_slot_locked(submission.day)
 
             while submission.day not in self._slot_results_by_day:
+                if submission.company_id in self._retired_company_ids:
+                    return self._retired_result_locked(submission.company_id)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return {
@@ -178,17 +187,32 @@ class ArenaNextWeekCoordinator:
             )
 
     def _all_submitted_locked(self, day: int) -> bool:
-        return set(self._submissions_by_day.get(day, {})) == self._company_id_set
+        active_company_ids = self._active_company_ids_locked()
+        if not active_company_ids:
+            return False
+        return active_company_ids.issubset(set(self._submissions_by_day.get(day, {})))
 
     def _all_slots_submitted_locked(self, day: int) -> bool:
-        return set(self._slot_submissions_by_day.get(day, {})) == self._company_id_set
+        active_company_ids = self._active_company_ids_locked()
+        if not active_company_ids:
+            return False
+        return active_company_ids.issubset(set(self._slot_submissions_by_day.get(day, {})))
 
     def _advance_locked(self, day: int) -> None:
         if day in self._results_by_day or day in self._advancing_days:
             return
 
         self._advancing_days.add(day)
-        submissions = dict(self._submissions_by_day[day])
+        active_company_ids = self._active_company_ids_locked()
+        submissions = {
+            company_id: submission
+            for company_id, submission in self._submissions_by_day[day].items()
+            if company_id in active_company_ids
+        }
+        if not submissions:
+            self._advancing_days.discard(day)
+            self._condition.notify_all()
+            return
         self._condition.release()
         try:
             try:
@@ -200,7 +224,7 @@ class ArenaNextWeekCoordinator:
                         "error": "arena_advance_failed",
                         "message": f"{type(exc).__name__}: {exc}",
                     }
-                    for company_id in self.company_ids
+                    for company_id in submissions
                 }
         finally:
             self._condition.acquire()
@@ -214,7 +238,16 @@ class ArenaNextWeekCoordinator:
             return
 
         self._slot_advancing_days.add(day)
-        submissions = dict(self._slot_submissions_by_day[day])
+        active_company_ids = self._active_company_ids_locked()
+        submissions = {
+            company_id: submission
+            for company_id, submission in self._slot_submissions_by_day[day].items()
+            if company_id in active_company_ids
+        }
+        if not submissions:
+            self._slot_advancing_days.discard(day)
+            self._condition.notify_all()
+            return
         self._condition.release()
         try:
             try:
@@ -226,7 +259,7 @@ class ArenaNextWeekCoordinator:
                         "error": "arena_acquisition_slot_failed",
                         "message": f"{type(exc).__name__}: {exc}",
                     }
-                    for company_id in self.company_ids
+                    for company_id in submissions
                 }
         finally:
             self._condition.acquire()
@@ -250,10 +283,56 @@ class ArenaNextWeekCoordinator:
                 "error": f"Unknown arena company_id: {company_id}",
             }
         with self._condition:
+            if company_id in self._retired_company_ids:
+                return self._retired_result_locked(company_id)
             self._api_ports_by_company[company_id] = int(api_port)
             if display_name:
                 self._display_names_by_company[company_id] = display_name
         return {"success": True}
+
+    def retire_company(self, company_id: str, *, outcome: str | None = None) -> dict:
+        """Remove a terminal company from future arena barriers."""
+
+        if company_id not in self._company_id_set:
+            return {
+                "success": False,
+                "error": f"Unknown arena company_id: {company_id}",
+            }
+
+        with self._condition:
+            already_retired = company_id in self._retired_company_ids
+            self._retired_company_ids.add(company_id)
+            self._api_ports_by_company.pop(company_id, None)
+
+            for day in sorted(list(self._submissions_by_day)):
+                if self._all_submitted_locked(day):
+                    self._advance_locked(day)
+            for day in sorted(list(self._slot_submissions_by_day)):
+                if self._all_slots_submitted_locked(day):
+                    self._advance_slot_locked(day)
+
+            active_company_ids = sorted(self._active_company_ids_locked())
+            self._condition.notify_all()
+
+        return {
+            "success": True,
+            "company_id": company_id,
+            "retired": True,
+            "already_retired": already_retired,
+            "outcome": outcome or "",
+            "active_company_ids": active_company_ids,
+        }
+
+    def _active_company_ids_locked(self) -> set[str]:
+        return self._company_id_set - self._retired_company_ids
+
+    def _retired_result_locked(self, company_id: str) -> dict:
+        return {
+            "success": False,
+            "error": "arena_company_retired",
+            "company_id": company_id,
+            "message": "This arena company has already reached a terminal outcome.",
+        }
 
     def record_interaction(self, action: str, body: Mapping) -> dict:
         """Record one structured company-to-company interaction."""
@@ -533,6 +612,15 @@ class _ArenaRequestHandler(BaseHTTPRequestHandler):
                 company_id=str(body.get("company_id", "")),
                 display_name=body.get("display_name"),
                 api_port=int(body.get("api_port", 0) or 0),
+            )
+            self._send_json(result, status=200 if result.get("success") else 400)
+            return
+
+        if self.path == "/arena-retire-company":
+            body = self._read_json()
+            result = self.server.coordinator.retire_company(
+                str(body.get("company_id", "")),
+                outcome=str(body.get("outcome", "")) or None,
             )
             self._send_json(result, status=200 if result.get("success") else 400)
             return

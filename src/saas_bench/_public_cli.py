@@ -665,6 +665,53 @@ def cmd_arena_stop(args):
     print(json.dumps({"success": True}))
 
 
+def cmd_arena_retire(args):
+    company_id = args.company_id or os.environ.get("CEOBENCH_ARENA_COMPANY_ID")
+    if not company_id:
+        print(
+            "Error: --company-id is required unless CEOBENCH_ARENA_COMPANY_ID is set.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if args.arena_dir:
+        port_file = Path(args.arena_dir).resolve() / ".coordinator.port"
+        if not port_file.exists():
+            print(
+                f"Error: missing {port_file}; run arena-start first.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        coordinator_port = int(port_file.read_text().strip())
+    else:
+        coordinator_port_raw = os.environ.get("CEOBENCH_ARENA_COORDINATOR_PORT")
+        if not coordinator_port_raw:
+            print(
+                "Error: --arena-dir is required unless CEOBENCH_ARENA_COORDINATOR_PORT is set.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        coordinator_port = int(coordinator_port_raw)
+
+    result = _api_call(
+        coordinator_port,
+        "POST",
+        "/arena-retire-company",
+        {
+            "company_id": company_id,
+            "outcome": args.outcome,
+        },
+    )
+    if result.get("success"):
+        print(json.dumps(result, indent=2))
+        return
+
+    print(f"Error: {result.get('error', 'arena_retire_failed')}", file=sys.stderr)
+    if result.get("message"):
+        print(result["message"], file=sys.stderr)
+    sys.exit(1)
+
+
 def cmd_history(args):
     session_id = _resolve_session(args.session)
     history_path = _sessions_dir() / session_id / "history.jsonl"
@@ -827,6 +874,11 @@ Examples:
     p = subparsers.add_parser("arena-stop", help="Stop the Arena coordinator")
     p.add_argument("--arena-dir", type=str, required=True, help="Arena directory")
 
+    p = subparsers.add_parser("arena-retire", help="Retire an Arena company from future barriers")
+    p.add_argument("--arena-dir", type=str, default=None, help="Arena directory")
+    p.add_argument("--company-id", type=str, default=None, help="Arena company id")
+    p.add_argument("--outcome", type=str, default="terminal", help="Terminal outcome label")
+
     args = parser.parse_args()
 
     cmd_map = {
@@ -843,6 +895,7 @@ Examples:
         "arena-start": cmd_arena_start,
         "arena-coordinator": cmd_arena_coordinator,
         "arena-stop": cmd_arena_stop,
+        "arena-retire": cmd_arena_retire,
     }
 
     cmd_map[args.command](args)

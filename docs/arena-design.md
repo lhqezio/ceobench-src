@@ -554,6 +554,7 @@ Implemented:
 - `--arena`, `--arena-companies`, and `--arena-models` for the bash-agent path
 - single-company Arena parity by falling back to ordinary CEOBench
 - weekly barrier with all companies submitting `next-week`
+- terminal company retirement from future weekly and daily acquisition barriers
 - hidden daily Arena advancement inside the weekly barrier
 - shared acquisition returned inside CEOBench's ordinary `step_day()`
   customer-acquisition slot
@@ -584,9 +585,9 @@ Implemented:
 - public `novamind-operation next-week` forwards to an Arena coordinator when
   `CEOBENCH_ARENA_COMPANY_ID` and `CEOBENCH_ARENA_COORDINATOR_PORT` are set,
   so non-bash harnesses can keep using the same company-side CLI contract
-- public `arena-init`, `arena-start`, and `arena-stop` commands create ordinary
-  CEOBench company workspaces and run the shared Arena coordinator for external
-  harnesses
+- public `arena-init`, `arena-start`, `arena-retire`, and `arena-stop` commands
+  create ordinary CEOBench company workspaces, run the shared Arena coordinator,
+  and let external harnesses remove terminal companies from future barriers
 - ordinary CEOBench and Arena share lead-offer term evaluation through
   `Simulator._evaluate_lead_plan_offer_terms`
 
