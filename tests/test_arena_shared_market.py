@@ -457,6 +457,8 @@ def test_arena_public_market_snapshots_are_queryable(tmp_path):
                     "tier_A": 1,
                     "tier_B": 2,
                     "tier_C": 3,
+                    # Private company-side controls may be present in hidden
+                    # coordinator state but must not be published.
                     "quota_A": 100,
                     "quota_B": 200,
                     "quota_C": 300,
@@ -467,10 +469,21 @@ def test_arena_public_market_snapshots_are_queryable(tmp_path):
     )
 
     assert result == {"snapshots_written": 1}
+    columns = {
+        row[1]
+        for row in conn.execute(
+            "PRAGMA table_info(arena_public_market_snapshots)"
+        ).fetchall()
+    }
+    assert "quota_A" not in columns
+    assert "quota_B" not in columns
+    assert "quota_C" not in columns
+    assert "public_total_subscribers" not in columns
+    assert "public_subscribers_by_group_json" not in columns
+
     row = conn.execute(
         """
-        SELECT company_id, display_name, price_A, tier_C,
-               public_total_subscribers, public_subscribers_by_group_json
+        SELECT company_id, display_name, price_A, tier_C
         FROM arena_public_market_snapshots
         """
     ).fetchone()
@@ -478,8 +491,6 @@ def test_arena_public_market_snapshots_are_queryable(tmp_path):
     assert row["display_name"] == "NovaMind"
     assert row["price_A"] == pytest.approx(10.0)
     assert row["tier_C"] == 3
-    assert row["public_total_subscribers"] == 7
-    assert '"S1": 3' in row["public_subscribers_by_group_json"]
 
 
 def test_required_quality_matches_current_simulator_formula(tmp_path):

@@ -187,10 +187,7 @@ def public_market() -> Dict:
         """
         SELECT day, company_id, display_name,
                price_A, price_B, price_C,
-               tier_A, tier_B, tier_C,
-               quota_A, quota_B, quota_C,
-               public_total_subscribers,
-               public_subscribers_by_group_json
+               tier_A, tier_B, tier_C
         FROM arena_public_market_snapshots
         ORDER BY day DESC, company_id ASC
         """

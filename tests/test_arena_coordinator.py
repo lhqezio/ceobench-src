@@ -1222,6 +1222,11 @@ def test_arena_runner_advances_week_with_shared_acquisition_endpoint(monkeypatch
             }
         if path == "/arena-upsert-public-snapshots":
             assert len(body["snapshots"]) == 2
+            for snapshot in body["snapshots"]:
+                assert "subscriber_counts_by_group" not in snapshot
+                assert "quota_A" not in snapshot["config"]
+                assert "quota_B" not in snapshot["config"]
+                assert "quota_C" not in snapshot["config"]
             return {"success": True, "snapshots_written": len(body["snapshots"])}
         raise AssertionError(path)
 

@@ -1,6 +1,6 @@
 {
   "table": "arena_public_market_snapshots",
-  "description": "Arena-only public competitor snapshots. Populated by the Arena coordinator so companies can observe public rival state after weekly advances.",
+  "description": "Arena-only public competitor snapshots. Populated by the Arena coordinator so companies can observe public rival pricing and plan packaging after weekly advances.",
   "columns": {
     "day": "INTEGER \u2014 Simulation day when this public snapshot was recorded",
     "company_id": "TEXT \u2014 Stable Arena company identifier (e.g., company_0)",
@@ -10,11 +10,6 @@
     "price_C": "REAL \u2014 Public Plan C monthly price",
     "tier_A": "INTEGER \u2014 Public Plan A model tier",
     "tier_B": "INTEGER \u2014 Public Plan B model tier",
-    "tier_C": "INTEGER \u2014 Public Plan C model tier",
-    "quota_A": "INTEGER \u2014 Public Plan A usage quota",
-    "quota_B": "INTEGER \u2014 Public Plan B usage quota",
-    "quota_C": "INTEGER \u2014 Public Plan C usage quota",
-    "public_total_subscribers": "INTEGER \u2014 Public Arena subscriber count summary for this company at snapshot time",
-    "public_subscribers_by_group_json": "TEXT \u2014 JSON object of public subscriber counts by customer group"
+    "tier_C": "INTEGER \u2014 Public Plan C model tier"
   }
 }

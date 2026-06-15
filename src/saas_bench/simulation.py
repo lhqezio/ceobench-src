@@ -2055,7 +2055,6 @@ class Simulator:
         rows = []
         for snapshot in snapshots:
             config = dict(snapshot.get('config') or {})
-            subscribers_by_group = snapshot.get('subscriber_counts_by_group') or {}
             try:
                 day = int(snapshot.get('day', self.current_day))
             except (TypeError, ValueError):
@@ -2070,14 +2069,6 @@ class Simulator:
                 int(config.get('tier_A', 1)),
                 int(config.get('tier_B', 1)),
                 int(config.get('tier_C', 1)),
-                int(config.get('quota_A', 0)),
-                int(config.get('quota_B', 0)),
-                int(config.get('quota_C', 0)),
-                int(sum(int(v) for v in subscribers_by_group.values())),
-                json.dumps({
-                    str(group_id): int(count)
-                    for group_id, count in subscribers_by_group.items()
-                }),
             ))
 
         if rows:
@@ -2086,12 +2077,9 @@ class Simulator:
                 INSERT OR REPLACE INTO arena_public_market_snapshots (
                     day, company_id, display_name,
                     price_A, price_B, price_C,
-                    tier_A, tier_B, tier_C,
-                    quota_A, quota_B, quota_C,
-                    public_total_subscribers,
-                    public_subscribers_by_group_json
+                    tier_A, tier_B, tier_C
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )

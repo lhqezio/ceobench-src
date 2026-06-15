@@ -1040,12 +1040,8 @@ class ArenaBashAgentRunner:
                     "tier_A",
                     "tier_B",
                     "tier_C",
-                    "quota_A",
-                    "quota_B",
-                    "quota_C",
                 )
             },
-            "subscriber_counts_by_group": state.get("subscriber_counts_by_group", {}),
         }
 
     def _display_name(self, company_id: str) -> str:

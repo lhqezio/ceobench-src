@@ -143,7 +143,7 @@ TABLE_DOCS = {
         }
     },
     'arena_public_market_snapshots': {
-        'description': 'Arena-only public competitor snapshots. Populated by the Arena coordinator so companies can observe public rival state after weekly advances.',
+        'description': 'Arena-only public competitor snapshots. Populated by the Arena coordinator so companies can observe public rival pricing and plan packaging after weekly advances.',
         'columns': {
             'day': 'INTEGER — Simulation day when this public snapshot was recorded',
             'company_id': 'TEXT — Stable Arena company identifier (e.g., company_0)',
@@ -154,11 +154,6 @@ TABLE_DOCS = {
             'tier_A': 'INTEGER — Public Plan A model tier',
             'tier_B': 'INTEGER — Public Plan B model tier',
             'tier_C': 'INTEGER — Public Plan C model tier',
-            'quota_A': 'INTEGER — Public Plan A usage quota',
-            'quota_B': 'INTEGER — Public Plan B usage quota',
-            'quota_C': 'INTEGER — Public Plan C usage quota',
-            'public_total_subscribers': 'INTEGER — Public Arena subscriber count summary for this company at snapshot time',
-            'public_subscribers_by_group_json': 'TEXT — JSON object of public subscriber counts by customer group',
         }
     },
     'social_media_posts': {
@@ -501,6 +496,8 @@ def init_database(db_path: Path) -> sqlite3.Connection:
         );
 
         -- Arena public competitor snapshots (agent-visible in Arena runs).
+        -- Only public pricing/packaging belongs here; private quotas and
+        -- subscriber counts remain hidden coordinator state.
         CREATE TABLE IF NOT EXISTS arena_public_market_snapshots (
             day INTEGER NOT NULL,
             company_id TEXT NOT NULL,
@@ -511,11 +508,6 @@ def init_database(db_path: Path) -> sqlite3.Connection:
             tier_A INTEGER NOT NULL,
             tier_B INTEGER NOT NULL,
             tier_C INTEGER NOT NULL,
-            quota_A INTEGER NOT NULL,
-            quota_B INTEGER NOT NULL,
-            quota_C INTEGER NOT NULL,
-            public_total_subscribers INTEGER NOT NULL DEFAULT 0,
-            public_subscribers_by_group_json TEXT NOT NULL DEFAULT '{}',
             PRIMARY KEY (day, company_id)
         );
         CREATE INDEX IF NOT EXISTS idx_arena_public_company_day
@@ -1233,6 +1225,51 @@ def init_database(db_path: Path) -> sqlite3.Connection:
             conn.execute(f"ALTER TABLE competitor_events ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError:
             pass  # Column already exists
+
+    # Arena privacy migration: older DBs exposed private quotas and exact
+    # subscriber summaries in public market snapshots. Rebuild the table with
+    # only public pricing/packaging columns.
+    arena_public_cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(arena_public_market_snapshots)").fetchall()
+    }
+    private_public_snapshot_cols = {
+        'quota_A',
+        'quota_B',
+        'quota_C',
+        'public_total_subscribers',
+        'public_subscribers_by_group_json',
+    }
+    if arena_public_cols & private_public_snapshot_cols:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS arena_public_market_snapshots_new (
+                day INTEGER NOT NULL,
+                company_id TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                price_A REAL NOT NULL,
+                price_B REAL NOT NULL,
+                price_C REAL NOT NULL,
+                tier_A INTEGER NOT NULL,
+                tier_B INTEGER NOT NULL,
+                tier_C INTEGER NOT NULL,
+                PRIMARY KEY (day, company_id)
+            );
+            INSERT OR REPLACE INTO arena_public_market_snapshots_new (
+                day, company_id, display_name,
+                price_A, price_B, price_C,
+                tier_A, tier_B, tier_C
+            )
+            SELECT
+                day, company_id, display_name,
+                price_A, price_B, price_C,
+                tier_A, tier_B, tier_C
+            FROM arena_public_market_snapshots;
+            DROP TABLE arena_public_market_snapshots;
+            ALTER TABLE arena_public_market_snapshots_new
+                RENAME TO arena_public_market_snapshots;
+            CREATE INDEX IF NOT EXISTS idx_arena_public_company_day
+                ON arena_public_market_snapshots(company_id, day);
+        """)
 
     # L8 migration: drop redundant daily_usage day index (PK already covers it)
     # and ensure new active-thread partial index exists on existing databases
