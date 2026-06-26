@@ -4088,25 +4088,25 @@ class Simulator:
                         )
                         text = llm_response.content[0].text.strip()
                     else:
-                        llm_response = self.customer_simulator.client.responses.create(
+                        llm_response = self.customer_simulator.client.chat.completions.create(
                             model=social_model,
-                            reasoning={"effort": "low"},
-                            input=[
+                            temperature=config.social_media_temperature,
+                            messages=[
                                 {"role": "system", "content": "You are a social media content generator simulating realistic business professionals posting about economic conditions."},
                                 {"role": "user", "content": item['prompt']}
                             ],
-                            max_output_tokens=300,
+                            max_tokens=300,
                         )
-                        text = llm_response.output_text.strip()
+                        text = (llm_response.choices[0].message.content or "").strip()
 
                     # Clean: strip numbering/bullets if LLM added them
                     import re
-                    text = re.sub(r'^\d+[\.\)]\s*', '', text).strip()
+                    text = re.sub(r'^\d+[\.)]\s*', '', text).strip()
                     text = re.sub(r'^[-•]\s*', '', text).strip()
                     text = text.strip('"').strip("'")
 
                     return {'type': 'macro', **item, 'text': text, 'success': True,
-                            'input_tokens': llm_response.usage.input_tokens,
+                            'input_tokens': llm_response.usage.prompt_tokens,
                             'output_tokens': llm_response.usage.output_tokens}
                 except Exception as e:
                     import sys
@@ -4255,19 +4255,19 @@ class Simulator:
                         )
                         text = llm_response.content[0].text.strip()
                     else:
-                        llm_response = self.customer_simulator.client.responses.create(
+                        llm_response = self.customer_simulator.client.chat.completions.create(
                             model=social_model,
-                            reasoning={"effort": "low"},
-                            input=[
+                            temperature=config.social_media_temperature,
+                            messages=[
                                 {"role": "system", "content": "You are a social media content generator simulating realistic business professionals posting about economic conditions."},
                                 {"role": "user", "content": item['prompt']}
                             ],
-                            max_output_tokens=300,
+                            max_tokens=300,
                         )
-                        text = llm_response.output_text.strip()
+                        text = (llm_response.choices[0].message.content or "").strip()
 
                     import re
-                    text = re.sub(r'^\d+[\.\)]\s*', '', text).strip()
+                    text = re.sub(r'^\d+[\.)]\s*', '', text).strip()
                     text = re.sub(r'^[-•]\s*', '', text).strip()
                     text = text.strip('"').strip("'")
 
@@ -5757,19 +5757,19 @@ Guidelines:
                 model=social_model
             )
         else:
-            response = self.customer_simulator.client.responses.create(
+            response = self.customer_simulator.client.chat.completions.create(
                 model=social_model,
-                reasoning={"effort": "low"},
-                input=[
+                temperature=social_temperature,
+                messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_output_tokens=post_max_tokens,
+                max_tokens=post_max_tokens,
             )
-            post_text = response.output_text.strip()
+            post_text = (response.choices[0].message.content or "").strip()
             self.customer_simulator._log_cost(
                 self.current_day, 'competitor_event_post',
-                response.usage.input_tokens, response.usage.output_tokens,
+                response.usage.prompt_tokens, response.usage.completion_tokens,
                 model=social_model
             )
 

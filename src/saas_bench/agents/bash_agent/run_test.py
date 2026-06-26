@@ -265,6 +265,8 @@ class BashAgentRunner:
             if self.base_url:
                 client_kwargs["base_url"] = self.base_url
             client_kwargs["timeout"] = httpx.Timeout(600.0)  # 10min max per LLM call; retry on timeout
+            # Some OpenAI-compatible endpoints block the OpenAI SDK user-agent
+            client_kwargs["default_headers"] = {"User-Agent": "python-httpx/0.28.1"}
             self.client = OpenAI(**client_kwargs)
 
         # Components (initialized in setup)

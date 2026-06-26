@@ -524,20 +524,19 @@ Output ONLY the post text, nothing else."""
             input_tokens = response.usage.input_tokens
             output_tokens = response.usage.output_tokens
         else:
-            # Fallback to OpenAI
-            print(f"[WARN] Social post using OpenAI fallback (provider={social_provider}, model={social_model}). Set social_post_llm_provider='bedrock' or 'anthropic' for Haiku 4.5.")
-            response = self.client.responses.create(
+            # OpenAI-compatible (includes local endpoints like llama.cpp, vLLM, Ollama)
+            response = self.client.chat.completions.create(
                 model=social_model,
-                reasoning={"effort": "low"},
-                input=[
+                temperature=social_temperature,
+                messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_output_tokens=1000,
+                max_tokens=self.config.social_post_llm_max_tokens,
             )
-            post_text = response.output_text.strip()
-            input_tokens = response.usage.input_tokens
-            output_tokens = response.usage.output_tokens
+            post_text = (response.choices[0].message.content or "").strip()
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
 
         # Debug: Log if empty response
         if not post_text:
@@ -761,20 +760,19 @@ Output JSON:
                 input_tokens = response.usage.input_tokens
                 output_tokens = response.usage.output_tokens
             else:
-                # Fallback to OpenAI
-                print(f"[WARN] Negotiation response using OpenAI fallback (provider={enterprise_provider}, model={enterprise_model}). Set enterprise_llm_provider='bedrock' or 'anthropic' for Sonnet 4.5.")
-                response = self.client.responses.create(
+                # OpenAI-compatible (includes local endpoints like llama.cpp, vLLM, Ollama)
+                response = self.client.chat.completions.create(
                     model=enterprise_model,
-                    reasoning={"effort": self.reasoning_effort},
-                    input=[
+                    temperature=self.config.enterprise_llm_temperature,
+                    messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    max_output_tokens=300
+                    max_tokens=self.config.enterprise_llm_max_tokens,
                 )
-                response_text = response.output_text.strip()
-                input_tokens = response.usage.input_tokens
-                output_tokens = response.usage.output_tokens
+                response_text = (response.choices[0].message.content or "").strip()
+                input_tokens = response.usage.prompt_tokens
+                output_tokens = response.usage.completion_tokens
 
             self._log_cost(day, 'customer_negotiation', input_tokens, output_tokens, model=enterprise_model)
 
@@ -917,20 +915,19 @@ Output ONLY the message text."""
                 input_tokens = response.usage.input_tokens
                 output_tokens = response.usage.output_tokens
             else:
-                # Fallback to OpenAI
-                print(f"[WARN] Initial outreach using OpenAI fallback (provider={enterprise_provider}, model={enterprise_model}). Set enterprise_llm_provider='bedrock' or 'anthropic' for Sonnet 4.5.")
-                response = self.client.responses.create(
+                # OpenAI-compatible (includes local endpoints like llama.cpp, vLLM, Ollama)
+                response = self.client.chat.completions.create(
                     model=enterprise_model,
-                    reasoning={"effort": self.reasoning_effort},
-                    input=[
+                    temperature=self.config.enterprise_llm_temperature,
+                    messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": "Write your initial outreach message."}
                     ],
-                    max_output_tokens=150
+                    max_tokens=150,
                 )
-                text = response.output_text.strip()
-                input_tokens = response.usage.input_tokens
-                output_tokens = response.usage.output_tokens
+                text = (response.choices[0].message.content or "").strip()
+                input_tokens = response.usage.prompt_tokens
+                output_tokens = response.usage.completion_tokens
 
             self._log_cost(day, 'customer_initial_outreach', input_tokens, output_tokens, model=enterprise_model)
 

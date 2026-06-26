@@ -146,7 +146,7 @@ def _apply_simulator_llm_config(config: BenchmarkConfig) -> dict:
     if (
         config.social_post_llm_provider == "openai"
         or config.enterprise_llm_provider == "openai"
-    ) and not os.environ.get("OPENAI_API_KEY"):
+    ) and not os.environ.get("OPENAI_API_KEY") and not os.environ.get("OPENAI_BASE_URL"):
         print(
             "Error: simulator OpenAI provider requires OPENAI_API_KEY. "
             "It does not use agent-only credentials such as --api-key.",
@@ -174,7 +174,15 @@ def _create_simulator_openai_client(config: BenchmarkConfig):
 
     from openai import OpenAI
 
-    return OpenAI()
+    # Support OPENAI_BASE_URL for OpenAI-compatible endpoints (llama.cpp, vLLM, etc.)
+    base_url = os.environ.get("OPENAI_BASE_URL")
+    api_key = os.environ.get("OPENAI_API_KEY", "dummy")
+    kwargs = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    # Some OpenAI-compatible endpoints block the OpenAI SDK user-agent
+    kwargs["default_headers"] = {"User-Agent": "python-httpx/0.28.1"}
+    return OpenAI(**kwargs)
 
 
 # =========================================================================

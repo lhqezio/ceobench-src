@@ -674,18 +674,18 @@ class BenchmarkConfig:
     #   - "anthropic": Direct Anthropic SDK; requires ANTHROPIC_API_KEY.
     #                  Use the public model name (e.g. "claude-haiku-4-5"). No AWS credentials needed.
     #   - "openai":    OpenAI Responses API; requires OPENAI_API_KEY.
-    social_post_llm_model: str = "claude-haiku-4-5"
-    social_post_llm_provider: str = "anthropic"  # "bedrock" | "anthropic" | "openai"
+    social_post_llm_model: str = "Qwen3.6-35B-A3B-MTP-UD-Q4_K_M.gguf"
+    social_post_llm_provider: str = "openai"  # "bedrock" | "anthropic" | "openai"
     social_post_llm_temperature: float = 0.9  # Higher for creative variety
     social_post_llm_max_tokens: int = 1000
 
     # Enterprise Customer LLM (for negotiation responses, initial outreach).
     # Local Opus benchmark runs use direct Anthropic here so the simulator does
     # not require Bedrock credentials.
-    enterprise_llm_model: str = "claude-sonnet-4-5"
-    enterprise_llm_provider: str = "anthropic"  # "bedrock" | "anthropic" | "openai"
+    enterprise_llm_model: str = "Qwen3.6-35B-A3B-MTP-UD-Q4_K_M.gguf"
+    enterprise_llm_provider: str = "openai"  # "bedrock" | "anthropic" | "openai"
     enterprise_llm_temperature: float = 0.7
-    enterprise_llm_max_tokens: int = 300
+    enterprise_llm_max_tokens: int = 1024
 
     # Bedrock configuration
     bedrock_region: str = "us-east-2"  # Ohio — AWS Bedrock region

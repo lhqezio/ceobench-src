@@ -80,7 +80,7 @@ class BashAgent(BaseAgent):
         # forwards to OpenAI for gpt-* models so /v1/responses works there too —
         # in fact, gpt-5.x with reasoning_effort + tools REQUIRES /v1/responses.
         base_url = str(getattr(client, 'base_url', '') or '')
-        _non_responses_hosts = ('generativelanguage.googleapis.com', 'api.together.xyz')
+        _non_responses_hosts = ('generativelanguage.googleapis.com', 'api.together.xyz', 'infer.bloxtr8.com')
         self.supports_responses_api = not any(h in base_url for h in _non_responses_hosts)
 
         # Build system prompt

@@ -270,7 +270,7 @@ def _build_zipapp():
         zipapp.create_archive(
             source=str(staging),
             target=str(target),
-            interpreter='/usr/bin/env python3',
+            interpreter=sys.executable,  # use the python that built it (venv)
             compressed=False,
         )
 
