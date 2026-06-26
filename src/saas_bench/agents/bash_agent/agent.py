@@ -57,6 +57,7 @@ class BashAgent(BaseAgent):
         workspace_path: Optional[Path] = None,
         total_days: int = 3650,
         anthropic_fallback_model: Optional[str] = None,
+        context_manager=None,
     ):
         super().__init__(tool_descriptions)
         self.client = client
@@ -68,6 +69,7 @@ class BashAgent(BaseAgent):
         self.workspace_path = workspace_path or Path('.')
         self.total_days = total_days
         self.anthropic_fallback_model = anthropic_fallback_model
+        self.context_manager = context_manager  # ACM ActiveContextManager | None
 
         # Detect client type
         client_type = type(client).__name__
@@ -206,17 +208,29 @@ class BashAgent(BaseAgent):
         """Refresh conversation context for a new day.
 
         Clears conversation, inserts system prompt + dashboard.
-        The agent reads its own files via tools when it needs context.
+        When a context_manager (ACM) is attached, the ACM-constructed frame
+        replaces the MEMORY.md auto-load — the agent gets a phase-adaptive
+        belief-state summary instead of its own freeform notes. Env-gated: only
+        active when the runner built an ACM instance (ACM_CONTEXT=1) and only on
+        the non-Anthropic path used by the comparison.
         """
         self.conversation = []
         self._pending_tool_calls = []
 
         if not self.use_anthropic:
-            # OpenAI: system prompt goes in messages
-            self.conversation.append(Message(
-                role='system',
-                content=self._get_system_prompt_with_memory(),
-            ))
+            if self.context_manager is not None:
+                self.context_manager.update(dashboard, None, self.context_manager.env.db)
+                frame = self.context_manager.construct()
+                system = self.system_prompt
+                if frame:
+                    system = system + "\n\n## ACM Context (auto-constructed)\n\n" + frame
+                self.conversation.append(Message(role='system', content=system))
+            else:
+                # OpenAI: system prompt goes in messages
+                self.conversation.append(Message(
+                    role='system',
+                    content=self._get_system_prompt_with_memory(),
+                ))
 
     def check_day_advanced(self, bash_output: str) -> bool:
         """Check if bash output contains a dashboard (day advanced).

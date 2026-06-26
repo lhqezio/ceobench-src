@@ -955,6 +955,14 @@ __pycache__/
 
         tool_descriptions = get_bash_agent_tool_descriptions()
 
+        context_manager = None
+        if os.environ.get("ACM_CONTEXT") == "1":
+            import acm  # imported via PYTHONPATH=<acm>/src
+            context_manager = acm.build_acm_for_ceobench(
+                server_port=self._server_port, budget=8000
+            )
+            print(f"  ACM context manager enabled (port={self._server_port}, budget=8000)")
+
         self.agent = BashAgent(
             tool_descriptions=tool_descriptions,
             client=self.client,
@@ -966,6 +974,7 @@ __pycache__/
             workspace_path=self.agent_workspace,
             total_days=self.total_days,
             anthropic_fallback_model=self.anthropic_fallback_model,
+            context_manager=context_manager,
         )
 
         # Wire the per-session conversation snapshot path. The agent writes
