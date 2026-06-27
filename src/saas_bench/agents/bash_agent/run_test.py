@@ -958,10 +958,11 @@ __pycache__/
         context_manager = None
         if os.environ.get("ACM_CONTEXT") == "1":
             import acm  # imported via PYTHONPATH=<acm>/src
+            acm_budget = int(os.environ.get("ACM_BUDGET", "8000"))
             context_manager = acm.build_acm_for_ceobench(
-                server_port=self._server_port, budget=8000
+                server_port=self._server_port, budget=acm_budget
             )
-            print(f"  ACM context manager enabled (port={self._server_port}, budget=8000)")
+            print(f"  ACM context manager enabled (port={self._server_port}, budget={acm_budget})")
 
         self.agent = BashAgent(
             tool_descriptions=tool_descriptions,
