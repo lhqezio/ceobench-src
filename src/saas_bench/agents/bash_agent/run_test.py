@@ -965,10 +965,19 @@ __pycache__/
         if os.environ.get("ACM_CONTEXT") == "1":
             import acm  # imported via PYTHONPATH=<acm>/src
             acm_budget = int(os.environ.get("ACM_BUDGET", "8000"))
+            # Adaptive mode opts in via an explicit window, else the model-name
+            # registry resolves it (bloxtr8/gpt-4o/claude-*/qwen2.5); when
+            # neither resolves the manager stays in fixed mode (budget=acm_budget),
+            # so a run that sets only ACM_CONTEXT=1 (e.g. the running pair) is
+            # untouched by this change.
+            acm_window = int(os.environ["ACM_CONTEXT_WINDOW"]) \
+                if os.environ.get("ACM_CONTEXT_WINDOW") else None
             context_manager = acm.build_acm_for_ceobench(
-                server_port=self._server_port, budget=acm_budget
+                server_port=self._server_port, budget=acm_budget,
+                context_window=acm_window, model_name=self.model,
             )
-            print(f"  ACM context manager enabled (port={self._server_port}, budget={acm_budget})")
+            print(f"  ACM context manager enabled (port={self._server_port}, "
+                  f"budget={acm_budget}, window={context_manager.context_window})")
 
         self.agent = BashAgent(
             tool_descriptions=tool_descriptions,
@@ -990,6 +999,14 @@ __pycache__/
         self.agent._snapshot_path = (
             self.agent_workspace / "sessions" / self._session_id / "conversation.json"
         )
+
+        # Thread the agent's live conversation cost into the adaptive ACM manager
+        # so its frame target shrinks as the conversation grows. Built after the
+        # agent (the manager is constructed first, passed to the agent, then
+        # wired back here) — the callback is only read each turn, by which point
+        # the agent's conversation exists.
+        if context_manager is not None and context_manager.adaptive:
+            context_manager._history_cost_fn = self.agent.history_token_cost
 
         # Save run config
         config = {

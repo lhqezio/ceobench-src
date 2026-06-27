@@ -122,6 +122,22 @@ class BashAgent(BaseAgent):
         # restored mid-day conversation isn't wiped. Cleared after one act().
         self._skip_next_refresh: bool = False
 
+    def history_token_cost(self) -> int:
+        """Heuristic token cost of the in-flight conversation (chars//4 per
+        message content, the same x4 convention the ACM model adapter uses when
+        tiktoken isn't available). The adaptive ACM context manager calls this
+        each turn to shrink the frame target as the conversation grows — the
+        dynamic 'depends on the context' headroom term. Content may be a string
+        or a list of Anthropic content blocks."""
+        total = 0
+        for m in self.conversation:
+            c = m.content
+            if isinstance(c, list):
+                c = " ".join(str(b) for b in c)
+            if c:
+                total += len(str(c))
+        return total // 4
+
     def _default_system_prompt(self) -> str:
         """Build the default system prompt.
 
