@@ -232,6 +232,40 @@ class BashAgent(BaseAgent):
                     content=self._get_system_prompt_with_memory(),
                 ))
 
+    def _refresh_acm_frame(self, observation: str):
+        """Per-turn ACM frame refresh (ACM only).
+
+        The Princeton baseline refreshes context only on day advancement — it
+        clears the conversation and reloads MEMORY.md, then freezes until the
+        next day. ACM instead re-estimates its belief state every turn: feed the
+        current observation to the manager, re-construct the frame, and replace
+        the ACM Context section in the system message in place. The conversation
+        (tool history) is left intact — ACM manages context through the frame,
+        not by clearing.
+
+        This is the "active" in active context management: the frame tracks the
+        agent turn-by-turn instead of snapshotting once per day. The cheap
+        inference-time realization of the same idea is ACM-KV (Phase 5), which
+        operates on the KV cache per token instead of rebuilding the prompt.
+
+        Env-gated: only runs when an ACM instance is attached (ACM_CONTEXT=1) and
+        only on the non-Anthropic path used by the comparison.
+        """
+        if self.use_anthropic or self.context_manager is None:
+            return
+        self.context_manager.update(observation, None, self.context_manager.env.db)
+        frame = self.context_manager.construct()
+        system = self.system_prompt
+        if frame:
+            system = system + "\n\n## ACM Context (auto-constructed)\n\n" + frame
+        # Replace the system message in place when one is already at the head of
+        # the conversation; otherwise insert it. We never clear the conversation
+        # here — that is the Princeton baseline's job, kept for the standard run.
+        if self.conversation and self.conversation[0].role == 'system':
+            self.conversation[0] = Message(role='system', content=system)
+        else:
+            self.conversation.insert(0, Message(role='system', content=system))
+
     def check_day_advanced(self, bash_output: str) -> bool:
         """Check if bash output contains a dashboard (day advanced).
 
@@ -277,6 +311,7 @@ class BashAgent(BaseAgent):
 
         # Check if this is a new day (context refresh)
         current_day = info.get('day', 0)
+        day_just_advanced = False
         if current_day > self.current_day:
             if self._skip_next_refresh:
                 # Mid-day resume: conversation was restored from snapshot.
@@ -287,6 +322,15 @@ class BashAgent(BaseAgent):
                 self._refresh_context(observation, current_day)
                 self.current_day = current_day
                 self.turns_today = 0
+                day_just_advanced = True
+
+        # ACM runs every turn: re-estimate the belief-state frame from the current
+        # observation and refresh it in the system message. The Princeton baseline
+        # (context_manager is None) keeps its day-advance-gated design — it does
+        # not enter this branch. Skip on the day-advance turn itself, since
+        # _refresh_context already updated+constructed with the dashboard.
+        if self.context_manager is not None and not day_just_advanced:
+            self._refresh_acm_frame(observation)
 
         # Safety: force next_week if too many turns (0 = no limit)
         if self.max_turns_per_day > 0 and self.turns_today >= self.max_turns_per_day:
