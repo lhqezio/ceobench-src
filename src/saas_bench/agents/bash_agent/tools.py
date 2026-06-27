@@ -161,6 +161,37 @@ BASH_AGENT_TOOL_DEFS = [
             'required': ['pattern'],
         },
     },
+    {
+        'name': 'recall',
+        'description': (
+            'Recall deeper ACM belief-state detail the auto-constructed context '
+            'frame omitted: full decision outcome chains (not last 4), the '
+            'complete active queue (not top 10), full entity series (not '
+            'latest+trend), all anomalies, full recency buffer. target= '
+            'state|decisions|active|entity:<name>|phase|anomalies|recency. '
+            'Optional filter=substring. Returns up to ~2000 tokens; '
+            'head-truncated if longer. Only available when ACM_CONTEXT=1.'
+        ),
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'target': {
+                    'type': 'string',
+                    'description': 'One of: state, decisions, active, '
+                                   'entity:<name>, phase, anomalies, recency',
+                },
+                'filter': {
+                    'type': 'string',
+                    'description': 'Optional case-insensitive substring filter',
+                },
+                'max_tokens': {
+                    'type': 'integer',
+                    'description': 'Token cap on returned text (default 2000)',
+                },
+            },
+            'required': ['target'],
+        },
+    },
 ]
 
 

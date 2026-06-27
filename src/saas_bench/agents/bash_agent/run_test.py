@@ -954,6 +954,12 @@ __pycache__/
         )
 
         tool_descriptions = get_bash_agent_tool_descriptions()
+        # The recall tool is an ACM-only affordance: advertise it only when
+        # ACM_CONTEXT=1 so baseline runs never see it (and the already-running
+        # ACM pair, which has the module cached, is unaffected).
+        if os.environ.get("ACM_CONTEXT") != "1":
+            tool_descriptions = [t for t in tool_descriptions
+                                 if t.get('name') != 'recall']
 
         context_manager = None
         if os.environ.get("ACM_CONTEXT") == "1":
@@ -1011,6 +1017,23 @@ __pycache__/
         Raises NextDayTimeoutError if ./novamind-operation next-week times out,
         which triggers run checkpoint + kill in the run loop.
         """
+        # recall is an ACM-only tool: the executor stays sandboxed and
+        # ACM-unaware, so dispatch it here via the manager attached to the
+        # agent. Tool-result logging + history insertion are tool-name-agnostic,
+        # so a recall result flows through the same path as any other tool.
+        if tool_name == 'recall':
+            cm = getattr(self.agent, 'context_manager', None)
+            if cm is None:
+                return "Error: recall tool requires ACM_CONTEXT=1"
+            try:
+                return cm.recall(
+                    target=arguments.get('target', ''),
+                    filter=arguments.get('filter'),
+                    max_tokens=int(arguments.get('max_tokens', 2000)),
+                )
+            except Exception as e:
+                return f"Error: recall failed: {e}"
+
         result = self.tool_executor.execute(tool_name, arguments)
 
         # Check if bash output contains a day advancement
